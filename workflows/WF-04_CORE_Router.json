@@ -1,0 +1,48 @@
+{
+  "name": "WF-04 CORE Router",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf04-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j=$json;\\nconst p=j.payload ?? {};\\nconst text=(p.message?.text ?? p.text ?? '').trim().toLowerCase();\\nconst callback=p.callback_query?.data ?? p.callback_data ?? '';\\nconst state=j.context?.state ?? 'new';\\nlet route='unknown'; let reason='fallback';\\nif(text==='/start'){route='auth';reason='command:/start';}\\nelse if(text==='/help'){route='support';reason='command:/help';}\\nelse if(text==='/payment'||text==='/pay'){route='payment';reason='payment command';}\\nelse if(text==='/status'){route='order_status';reason='status command';}\\nelse if(callback.startsWith('pay:')){route='payment';reason='payment callback';}\\nelse if(callback.startsWith('approve:')){route='approval';reason='approval callback';}\\nelse if(callback.startsWith('order:')){route='order';reason='order callback';}\\nelse if(state==='awaiting_payment'){route='payment';reason='context';}\\nelse if(state==='awaiting_approval'){route='approval';reason='context';}\\nelse if(state==='awaiting_input'){route='context_input';reason='context';}\\nelse if(/оплат|payment|счет|счёт/.test(text)){route='payment_support';reason='deterministic text rule';}\\nelse if(/заказ|заявк|order/.test(text)){route='order';reason='deterministic text rule';}\\nelse if(/ошиб|не работает|проблем|support|помощ/.test(text)){route='support';reason='deterministic text rule';}\\nelse if(text){route='ai_classification';reason='free text requires classifier';}\\nreturn [{json:{...j,routing:{route,reason,llm_required:route==='ai_classification'}}}];"
+      },
+      "id": "wf04-route",
+      "name": "Deterministic Router",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Deterministic Router",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}
