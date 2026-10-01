@@ -1,0 +1,77 @@
+{
+  "name": "WF-03 SYS Context Manager",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf03-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT state,status,payload,processing_lock,locked_at,expires_at,updated_at FROM bot_context WHERE user_id = $1::uuid LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.auth?.user?.id ?? $json.internal_user_id] }}"
+        }
+      },
+      "id": "wf03-context",
+      "name": "Load Context",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -280,
+        0
+      ],
+      "notes": "Назначьте PostgreSQL credentials после импорта."
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Execute Workflow Trigger').first().json;\\nconst c = $input.first()?.json ?? {};\\nconst now = Date.now();\\nconst expired = c.expires_at ? new Date(c.expires_at).getTime() < now : false;\\nconst stale = c.processing_lock && c.locked_at ? (now - new Date(c.locked_at).getTime()) > 10*60*1000 : false;\\nreturn [{json:{...input,context:{exists:Boolean(c.state),state:c.state ?? 'new',status:c.status ?? 'active',payload:c.payload ?? {},processing_lock:Boolean(c.processing_lock),expired,stale}}}];"
+      },
+      "id": "wf03-evaluate",
+      "name": "Evaluate Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Load Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Context": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}
