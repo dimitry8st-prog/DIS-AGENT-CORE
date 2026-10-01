@@ -1,0 +1,77 @@
+{
+  "name": "WF-01 SYS Idempotency",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf01-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT event_id, status, correlation_id FROM processed_events WHERE event_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [$json.event_id] }}"
+        }
+      },
+      "id": "wf01-check",
+      "name": "Check processed_events",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -280,
+        0
+      ],
+      "notes": "Назначьте PostgreSQL credentials после импорта."
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Execute Workflow Trigger').first().json;\\nconst row = $input.first()?.json ?? {};\\nif (row.event_id) return [{json:{...input,idempotency:{duplicate:row.status==='completed',busy:row.status==='processing',existing_status:row.status}}}];\\nreturn [{json:{...input,idempotency:{duplicate:false,busy:false,existing_status:null,should_insert:true}}}];"
+      },
+      "id": "wf01-decision",
+      "name": "Idempotency Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Check processed_events",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check processed_events": {
+      "main": [
+        [
+          {
+            "node": "Idempotency Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}
