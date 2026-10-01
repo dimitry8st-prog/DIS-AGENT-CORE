@@ -1,0 +1,77 @@
+{
+  "name": "WF-02 SYS User Auth",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "wf02-trigger",
+      "name": "Execute Workflow Trigger",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        -520,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, telegram_id, email, status FROM users WHERE telegram_id = $1 LIMIT 1;",
+        "options": {
+          "queryReplacement": "={{ [Number($json.user_id)] }}"
+        }
+      },
+      "id": "wf02-user",
+      "name": "Find User",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -280,
+        0
+      ],
+      "notes": "Назначьте PostgreSQL credentials после импорта."
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Execute Workflow Trigger').first().json;\\nconst user = $input.first()?.json ?? {};\\nconst found = Boolean(user.id);\\nreturn [{json:{...input,auth:{found,registration_required:!found,user:found?user:null}}}];"
+      },
+      "id": "wf02-result",
+      "name": "Auth Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -40,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Execute Workflow Trigger": {
+      "main": [
+        [
+          {
+            "node": "Find User",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find User": {
+      "main": [
+        [
+          {
+            "node": "Auth Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}
