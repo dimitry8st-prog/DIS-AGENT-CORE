@@ -1,0 +1,127 @@
+{
+  "name": "WF-00 SYS Event Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "dis-agent-core",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "wf00-webhook",
+      "name": "Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\\nconst headers = $json.headers ?? {};\\nconst source = body.update_id ? 'telegram' : (body.source ?? 'webhook');\\nconst userId = body.message?.from?.id ?? body.callback_query?.from?.id ?? body.user_id ?? null;\\nconst eventType = body.callback_query ? 'callback_query' : (body.message ? 'message' : (body.event_type ?? 'webhook'));\\nreturn [{json:{source,user_id:userId ? String(userId) : null,event_type:eventType,payload:body,headers,received_at:new Date().toISOString()}}];"
+      },
+      "id": "wf00-normalize",
+      "name": "Normalize Input",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -400,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const crypto = require('crypto');\\nconst j = $json;\\nconst rawEvent = j.payload?.update_id ?? j.payload?.callback_query?.id ?? j.payload?.message?.message_id ?? crypto.randomUUID();\\nconst event_id = `${j.source}_${rawEvent}`;\\nconst correlation_id = `COR-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;\\nreturn [{json:{...j,event_id,correlation_id}}];"
+      },
+      "id": "wf00-ids",
+      "name": "Generate IDs",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -160,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const blocked = new Set(['authorization','cookie','set-cookie','x-api-key','password','token','api_key','secret','cvv','cvc']);\\nfunction clean(v){ if(Array.isArray(v)) return v.map(clean); if(v && typeof v==='object'){ const o={}; for(const [k,val] of Object.entries(v)){ o[k]=blocked.has(k.toLowerCase())?'[REDACTED]':clean(val); } return o;} return v;}\\nreturn [{json:{...$json,headers:clean($json.headers),payload:clean($json.payload)}}];"
+      },
+      "id": "wf00-sanitize",
+      "name": "Sanitize Payload",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        80,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "wf00-response",
+      "name": "Respond",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.4,
+      "position": [
+        320,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalize Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Input": {
+      "main": [
+        [
+          {
+            "node": "Generate IDs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate IDs": {
+      "main": [
+        [
+          {
+            "node": "Sanitize Payload",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Sanitize Payload": {
+      "main": [
+        [
+          {
+            "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "pinData": {},
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "tags": []
+}
