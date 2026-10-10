@@ -2,45 +2,66 @@
   "name": "WF-03 SYS Context Manager",
   "nodes": [
     {
-      "parameters": {},
-      "id": "wf03-trigger",
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "execute-workflow-trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        -520,
+        0,
         0
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT state,status,payload,processing_lock,locked_at,expires_at,updated_at FROM bot_context WHERE user_id = $1::uuid LIMIT 1;",
+        "query": "SELECT dis_core_context($1::jsonb) AS result;",
         "options": {
-          "queryReplacement": "={{ [$json.auth?.user?.id ?? $json.internal_user_id] }}"
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
         }
       },
-      "id": "wf03-context",
+      "id": "load-context",
       "name": "Load Context",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -280,
+        220,
         0
       ],
-      "notes": "Назначьте PostgreSQL credentials после импорта."
+      "credentials": {
+        "postgres": {
+          "id": "DIS_CORE_POSTGRES",
+          "name": "DIS Core PostgreSQL"
+        }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "const input = $('Execute Workflow Trigger').first().json;\\nconst c = $input.first()?.json ?? {};\\nconst now = Date.now();\\nconst expired = c.expires_at ? new Date(c.expires_at).getTime() < now : false;\\nconst stale = c.processing_lock && c.locked_at ? (now - new Date(c.locked_at).getTime()) > 10*60*1000 : false;\\nreturn [{json:{...input,context:{exists:Boolean(c.state),state:c.state ?? 'new',status:c.status ?? 'active',payload:c.payload ?? {},processing_lock:Boolean(c.processing_lock),expired,stale}}}];"
+        "jsCode": "const j = $json.result;\nif (!j || typeof j !== 'object') throw new Error('Invalid database result');\nconst c = j.context;\nreturn [{json:{...j,context:{...c,state:c.expired?'expired':c.state}}}];\n"
       },
-      "id": "wf03-evaluate",
+      "id": "evaluate-context",
       "name": "Evaluate Context",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -40,
+        440,
         0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $('Execute Workflow Trigger').first().json;\nreturn [{json:{...j,error_code:'core_processing_error'}}];\n"
+      },
+      "id": "safe-database-error",
+      "name": "Safe Database Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        220
       ]
     }
   ],
@@ -64,14 +85,28 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Safe Database Error",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     }
   },
   "pinData": {},
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60,
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "active": false,
-  "tags": []
+  "tags": [],
+  "id": "disCoreWF03"
 }

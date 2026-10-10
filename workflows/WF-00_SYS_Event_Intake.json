@@ -8,67 +8,445 @@
         "responseMode": "responseNode",
         "options": {}
       },
-      "id": "wf00-webhook",
+      "id": "webhook",
       "name": "Webhook",
+      "webhookId": "1e5e0d8b-a5d0-4b57-8127-066c8bf53198",
       "type": "n8n-nodes-base.webhook",
       "typeVersion": 2.1,
       "position": [
-        -640,
+        0,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "const body = $json.body ?? $json;\\nconst headers = $json.headers ?? {};\\nconst source = body.update_id ? 'telegram' : (body.source ?? 'webhook');\\nconst userId = body.message?.from?.id ?? body.callback_query?.from?.id ?? body.user_id ?? null;\\nconst eventType = body.callback_query ? 'callback_query' : (body.message ? 'message' : (body.event_type ?? 'webhook'));\\nreturn [{json:{source,user_id:userId ? String(userId) : null,event_type:eventType,payload:body,headers,received_at:new Date().toISOString()}}];"
+        "jsCode": "const body = $json.body ?? $json;\nconst validObject = body && typeof body === 'object' && !Array.isArray(body);\nconst p = validObject ? body : {};\nconst telegram = p.update_id !== undefined || Boolean(p.message?.from || p.callback_query?.from);\nconst source = telegram ? 'telegram' : (['webhook', 'web', 'api', 'telegram'].includes(p.source) ? p.source : 'webhook');\nconst external = p.message?.from?.id ?? p.callback_query?.from?.id ?? p.user_id ?? null;\nlet user_id = null;\nlet validUser = external === null;\nif ((typeof external === 'string' || Number.isSafeInteger(external)) && /^[1-9]\\d{0,18}$/.test(String(external))) {\n  const value = BigInt(external);\n  validUser = value <= 9223372036854775807n;\n  if (validUser) user_id = String(external);\n}\nlet key = p.event_id ?? p.update_id ?? p.callback_query?.id;\nif (key === undefined && p.message?.message_id !== undefined && p.message?.chat?.id !== undefined) {\n  key = `${p.message.chat.id}:${p.message.message_id}`;\n}\nif (key === undefined) key = $json.headers?.['idempotency-key'];\nconst event_key = typeof key === 'string' || Number.isSafeInteger(key) ? String(key) : '';\nconst validKey = /^[A-Za-z0-9_.:-]{1,160}$/.test(event_key);\nconst event_type = p.callback_query || p.callback_data !== undefined ? 'callback_query' :\n  (p.message || p.text !== undefined ? 'message' : 'webhook');\nreturn [{json:{source, user_id, event_type, event_key, payload:p,\n  received_at:new Date().toISOString(), execution_id:String($execution.id),\n  valid: Boolean(validObject && validUser && validKey)}}];\n"
       },
-      "id": "wf00-normalize",
+      "id": "normalize-input",
       "name": "Normalize Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -400,
+        220,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "const crypto = require('crypto');\\nconst j = $json;\\nconst rawEvent = j.payload?.update_id ?? j.payload?.callback_query?.id ?? j.payload?.message?.message_id ?? crypto.randomUUID();\\nconst event_id = `${j.source}_${rawEvent}`;\\nconst correlation_id = `COR-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${crypto.randomUUID().slice(0,8).toUpperCase()}`;\\nreturn [{json:{...j,event_id,correlation_id}}];"
+        "jsCode": "const crypto = require('crypto');\nconst j = $json;\nconst correlation_id = `COR-${new Date().toISOString().slice(0,10).replaceAll('-','')}-${crypto.randomUUID()}`;\nconst event_id = j.valid ? `${j.source === 'telegram' ? 'tg' : j.source}_${j.event_key}` : null;\n// Fence ownership across instances/restarts as well as within this execution.\nconst execution_id = `${j.execution_id}:${crypto.randomUUID()}`;\nreturn [{json:{...j,event_id,correlation_id,execution_id}}];\n"
       },
-      "id": "wf00-ids",
+      "id": "generate-ids",
       "name": "Generate IDs",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -160,
+        440,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "const blocked = new Set(['authorization','cookie','set-cookie','x-api-key','password','token','api_key','secret','cvv','cvc']);\\nfunction clean(v){ if(Array.isArray(v)) return v.map(clean); if(v && typeof v==='object'){ const o={}; for(const [k,val] of Object.entries(v)){ o[k]=blocked.has(k.toLowerCase())?'[REDACTED]':clean(val); } return o;} return v;}\\nreturn [{json:{...$json,headers:clean($json.headers),payload:clean($json.payload)}}];"
+        "jsCode": "const j = $json;\nconst p = j.payload;\nconst text = p.message?.text ?? p.text;\nconst callback = p.callback_query?.data ?? p.callback_data;\n// Allowlist only routing fields. Drop all headers, arbitrary nested data and PII.\nconst payload = {};\nif (typeof text === 'string') payload.text = text.slice(0,4096);\nif (typeof callback === 'string') payload.callback_data = callback.slice(0,512);\nconst {event_key, ...contract} = j;\nreturn [{json:{...contract,payload}}];\n"
       },
-      "id": "wf00-sanitize",
+      "id": "sanitize-payload",
       "name": "Sanitize Payload",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        80,
+        660,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Valid Event",
+              "leftValue": "={{ $json.valid }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "valid-event",
+      "name": "Valid Event",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        880,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "disCoreWF01",
+          "mode": "id"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-wf-01",
+      "name": "Call WF-01",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1100,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "Reservation Acquired",
+              "leftValue": "={{ $json.idempotency.acquired }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "reservation-acquired",
+      "name": "Reservation Acquired",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1320,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "disCoreWF02",
+          "mode": "id"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-wf-02",
+      "name": "Call WF-02",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1540,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "disCoreWF03",
+          "mode": "id"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-wf-03",
+      "name": "Call WF-03",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1760,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "source": "database",
+        "workflowId": {
+          "__rl": true,
+          "value": "disCoreWF04",
+          "mode": "id"
+        },
+        "mode": "once",
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "id": "call-wf-04",
+      "name": "Call WF-04",
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.3,
+      "position": [
+        1980,
+        0
+      ],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT dis_core_finish($1::jsonb) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "complete-event",
+      "name": "Complete Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2200,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "DIS_CORE_POSTGRES",
+          "name": "DIS Core PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json.result;\nif (!j || typeof j !== 'object') throw new Error('Invalid database result');\nreturn [{json:{...j,...(!j.persistence?.recorded ? {error_code:'persistence_conflict'} : {})}}];\n"
+      },
+      "id": "completion-result",
+      "name": "Completion Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2420,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "let j = $('Sanitize Payload').first().json;\nfor (const name of ['Call WF-04','Call WF-03','Call WF-02','Call WF-01']) {\n  try {\n    const value = $(name).first().json;\n    if (value.event_id && !value.error) { j = value; break; }\n  } catch {}\n}\n// Never pass raw engine/SQL error text to persistence or the HTTP response.\nreturn [{json:{...j,error_code:'core_processing_error'}}];\n"
+      },
+      "id": "failure-contract",
+      "name": "Failure Contract",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2640,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT dis_core_finish($1::jsonb, true) AS result;",
+        "options": {
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
+        }
+      },
+      "id": "fail-event",
+      "name": "Fail Event",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2860,
+        0
+      ],
+      "onError": "continueErrorOutput",
+      "credentials": {
+        "postgres": {
+          "id": "DIS_CORE_POSTGRES",
+          "name": "DIS Core PostgreSQL"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json.result;\nif (!j || typeof j !== 'object') throw new Error('Invalid database result');\nreturn [{json:j}];\n"
+      },
+      "id": "failure-result",
+      "name": "Failure Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3080,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $('Failure Contract').first().json;\nreturn [{json:{...j,error_code:'database_unavailable',persistence:{recorded:false,status:'unconfirmed'}}}];\n"
+      },
+      "id": "database-unavailable",
+      "name": "Database Unavailable",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3300,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $json;\nconst d = j.idempotency ?? {};\nlet status = 'completed';\nlet http_status = 200;\nlet message = 'Событие обработано: определён маршрут; бизнес-действия не выполнялись.';\nif (!j.valid) { status = 'invalid_event'; http_status = 400; message = 'Нужны стабильный event_id и корректный внешний идентификатор.'; }\nelse if (j.error_code) { status = 'failed'; http_status = 503; message = 'Обработка временно недоступна.'; }\nelse if (d.duplicate) { status = 'duplicate'; message = 'Событие уже обработано.'; }\nelse if (d.busy) { status = 'busy'; http_status = 409; message = 'Событие уже обрабатывается.'; }\nelse if (d.failed) { status = 'previous_failed'; http_status = 409; message = 'Предыдущая обработка завершилась ошибкой; автоматический повтор отключён.'; }\nelse if (j.auth?.registration_required) { status = 'registration_required'; message = 'Требуется регистрация.'; }\nelse if (j.auth && !j.auth.allowed) { status = 'rejected'; http_status = 403; message = 'Доступ ограничен.'; }\nelse if (j.context?.processing_lock) { status = j.context.stale ? 'context_stale' : 'context_busy'; http_status = 409; message = 'Контекст заблокирован; обработка не продолжена.'; }\nelse if (j.context && !['active','expired'].includes(j.context.status)) { status = 'context_inactive'; http_status = 409; message = 'Контекст недоступен для обработки.'; }\nelse if (j.routing?.route === 'unknown') { message = 'Событие принято; маршрут не определён.'; }\nconst states = new Set(['new','awaiting_input','processing','awaiting_payment','awaiting_approval','completed','expired','failed']);\nconst body = {event_id:j.event_id,correlation_id:j.correlation_id,source:j.source,\n  user_id:j.user_id,event_type:j.event_type,received_at:j.received_at,status,\n  duplicate:Boolean(d.duplicate),busy:Boolean(d.busy),message};\nif (j.auth) body.auth = {found:j.auth.found,registration_required:j.auth.registration_required,allowed:j.auth.allowed};\nif (j.context) body.context = {exists:j.context.exists,state:states.has(j.context.state)?j.context.state:'new',\n  expired:j.context.expired,stale:j.context.stale,processing_lock:j.context.processing_lock};\nif (j.routing) body.routing = j.routing;\nif (j.error_code) body.error = 'core_processing_error';\nreturn [{json:{http_status,body}}];\n"
+      },
+      "id": "safe-response",
+      "name": "Safe Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3520,
         0
       ]
     },
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": "={{ $json.http_status }}"
+        }
       },
-      "id": "wf00-response",
+      "id": "respond",
       "name": "Respond",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.4,
       "position": [
-        320,
+        3740,
         0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "WF-01 Succeeded",
+              "leftValue": "={{ !$json.error_code }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf01-succeeded",
+      "name": "WF-01 Succeeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        300,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "WF-02 Succeeded",
+              "leftValue": "={{ !$json.error_code }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf02-succeeded",
+      "name": "WF-02 Succeeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        600,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "WF-03 Succeeded",
+              "leftValue": "={{ !$json.error_code }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "wf03-succeeded",
+      "name": "WF-03 Succeeded",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        900,
+        220
       ]
     }
   ],
@@ -110,7 +488,260 @@
       "main": [
         [
           {
+            "node": "Valid Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Valid Event": {
+      "main": [
+        [
+          {
+            "node": "Call WF-01",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF-01": {
+      "main": [
+        [
+          {
+            "node": "WF-01 Succeeded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Reservation Acquired": {
+      "main": [
+        [
+          {
+            "node": "Call WF-02",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF-02": {
+      "main": [
+        [
+          {
+            "node": "WF-02 Succeeded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF-03": {
+      "main": [
+        [
+          {
+            "node": "WF-03 Succeeded",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF-04": {
+      "main": [
+        [
+          {
+            "node": "Complete Event",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Complete Event": {
+      "main": [
+        [
+          {
+            "node": "Completion Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Completion Result": {
+      "main": [
+        [
+          {
+            "node": "Safe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failure Contract": {
+      "main": [
+        [
+          {
+            "node": "Fail Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fail Event": {
+      "main": [
+        [
+          {
+            "node": "Failure Result",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Database Unavailable",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Failure Result": {
+      "main": [
+        [
+          {
+            "node": "Safe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Database Unavailable": {
+      "main": [
+        [
+          {
+            "node": "Safe Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Safe Response": {
+      "main": [
+        [
+          {
             "node": "Respond",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-01 Succeeded": {
+      "main": [
+        [
+          {
+            "node": "Reservation Acquired",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-02 Succeeded": {
+      "main": [
+        [
+          {
+            "node": "Call WF-03",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WF-03 Succeeded": {
+      "main": [
+        [
+          {
+            "node": "Call WF-04",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Failure Contract",
             "type": "main",
             "index": 0
           }
@@ -120,8 +751,15 @@
   },
   "pinData": {},
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60,
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "active": false,
-  "tags": []
+  "tags": [],
+  "id": "disCoreWF00"
 }

@@ -2,26 +2,28 @@
   "name": "WF-04 CORE Router",
   "nodes": [
     {
-      "parameters": {},
-      "id": "wf04-trigger",
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "execute-workflow-trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        -420,
+        0,
         0
       ]
     },
     {
       "parameters": {
-        "jsCode": "const j=$json;\\nconst p=j.payload ?? {};\\nconst text=(p.message?.text ?? p.text ?? '').trim().toLowerCase();\\nconst callback=p.callback_query?.data ?? p.callback_data ?? '';\\nconst state=j.context?.state ?? 'new';\\nlet route='unknown'; let reason='fallback';\\nif(text==='/start'){route='auth';reason='command:/start';}\\nelse if(text==='/help'){route='support';reason='command:/help';}\\nelse if(text==='/payment'||text==='/pay'){route='payment';reason='payment command';}\\nelse if(text==='/status'){route='order_status';reason='status command';}\\nelse if(callback.startsWith('pay:')){route='payment';reason='payment callback';}\\nelse if(callback.startsWith('approve:')){route='approval';reason='approval callback';}\\nelse if(callback.startsWith('order:')){route='order';reason='order callback';}\\nelse if(state==='awaiting_payment'){route='payment';reason='context';}\\nelse if(state==='awaiting_approval'){route='approval';reason='context';}\\nelse if(state==='awaiting_input'){route='context_input';reason='context';}\\nelse if(/оплат|payment|счет|счёт/.test(text)){route='payment_support';reason='deterministic text rule';}\\nelse if(/заказ|заявк|order/.test(text)){route='order';reason='deterministic text rule';}\\nelse if(/ошиб|не работает|проблем|support|помощ/.test(text)){route='support';reason='deterministic text rule';}\\nelse if(text){route='ai_classification';reason='free text requires classifier';}\\nreturn [{json:{...j,routing:{route,reason,llm_required:route==='ai_classification'}}}];"
+        "jsCode": "const j = $json;\nconst p = j.payload ?? {};\nconst text = (p.text ?? '').trim().toLowerCase();\nconst callback = p.callback_data ?? '';\nconst command = text.match(/^\\/([a-z_]+)(?:@[a-z0-9_]+)?(?:\\s|$)/)?.[1];\nconst state = j.context?.state ?? 'new';\nlet route = 'unknown'; let reason = 'fallback';\nif (j.auth?.registration_required) { route = 'auth'; reason = 'registration_required'; }\nelse if (!j.auth?.allowed) { reason = 'access_denied'; }\nelse if (j.context?.processing_lock) { reason = j.context.stale ? 'context_stale' : 'context_busy'; }\nelse if (j.context && !['active','expired'].includes(j.context.status)) { reason = 'context_inactive'; }\nelse if (command === 'start') { route = 'auth'; reason = 'command:/start'; }\nelse if (command === 'help') { route = 'support'; reason = 'command:/help'; }\nelse if (command === 'payment' || command === 'pay') { route = 'payment'; reason = 'payment command'; }\nelse if (command === 'status') { route = 'order_status'; reason = 'status command'; }\nelse if (command) { reason = 'unknown_command'; }\nelse if (callback.startsWith('pay:')) { route = 'payment'; reason = 'payment callback'; }\nelse if (callback.startsWith('approve:')) { route = 'approval'; reason = 'approval callback'; }\nelse if (callback.startsWith('order:')) { route = 'order'; reason = 'order callback'; }\nelse if (callback) { reason = 'unknown_callback'; }\nelse if (j.context?.expired) { reason = 'context_expired'; }\nelse if (state === 'awaiting_payment') { route = 'payment'; reason = 'context'; }\nelse if (state === 'awaiting_approval') { route = 'approval'; reason = 'context'; }\nelse if (state === 'awaiting_input') { route = 'context_input'; reason = 'context'; }\nelse if (/оплат|payment|счет|счёт/.test(text)) { route = 'payment_support'; reason = 'deterministic text rule'; }\nelse if (/заказ|заявк|order/.test(text)) { route = 'order'; reason = 'deterministic text rule'; }\nelse if (/ошиб|не работает|проблем|support|помощ/.test(text)) { route = 'support'; reason = 'deterministic text rule'; }\nelse if (text) { route = 'ai_classification'; reason = 'free text requires classifier'; }\nreturn [{json:{...j,routing:{route,reason,llm_required:route === 'ai_classification'}}}];\n"
       },
-      "id": "wf04-route",
+      "id": "deterministic-router",
       "name": "Deterministic Router",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -160,
+        220,
         0
       ]
     }
@@ -41,8 +43,15 @@
   },
   "pinData": {},
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60,
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "active": false,
-  "tags": []
+  "tags": [],
+  "id": "disCoreWF04"
 }
