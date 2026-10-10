@@ -1,7 +1,16 @@
 {
-  "completed_at_utc": "2026-10-10T17:30:42.475106+00:00",
+  "completed_at_utc": "2026-10-10T18:00:31.291864+00:00",
   "n8n_version": "2.42.6",
   "database": "dis_core_workflows_test",
+  "source_sha256": {
+    "workflows/WF-00_SYS_Event_Intake.json": "5e445db1be2e71d8ef01381e51ce4e9fde262d7156087002dd100349b38a87d4",
+    "workflows/WF-01_SYS_Idempotency.json": "f3f8a31ed56527054274996d4859edd6209fd9b90a34fa33fd6af091b2681212",
+    "workflows/WF-02_SYS_User_Auth.json": "d626336f862a0eb8cc392b8ee566553831854ff8c886d499454ae078d7dfc692",
+    "workflows/WF-03_SYS_Context_Manager.json": "d41687ae8bec2455deeb1aa8378a5aa9ba019cddf3f38368c2cb6924a2c838df",
+    "workflows/WF-04_CORE_Router.json": "eaea92d8cb60dca3f473a4d976777dd86233213cbe29f3360554ff1e484c719a",
+    "db/001_core.sql": "d0e5fc64ef316597aba4e2bbd8179e46c464ffeb16c6d377908be93045d10083",
+    "db/002_core_processing.sql": "0e2f841d04d94a74d9d53343af272e83416368010baa7b40262caf68e7ceb2e1"
+  },
   "sql": {
     "executed": 8,
     "passed": 8,
@@ -33,18 +42,9 @@
     "skipped": [],
     "unexpected_successes": []
   },
-  "source_sha256": {
-    "workflows/WF-00_SYS_Event_Intake.json": "e301f50ed9d8196d0ca734454052aabfaa693ba0feee3a8463cfe8a456967dda",
-    "workflows/WF-01_SYS_Idempotency.json": "f3f8a31ed56527054274996d4859edd6209fd9b90a34fa33fd6af091b2681212",
-    "workflows/WF-02_SYS_User_Auth.json": "d626336f862a0eb8cc392b8ee566553831854ff8c886d499454ae078d7dfc692",
-    "workflows/WF-03_SYS_Context_Manager.json": "d41687ae8bec2455deeb1aa8378a5aa9ba019cddf3f38368c2cb6924a2c838df",
-    "workflows/WF-04_CORE_Router.json": "eaea92d8cb60dca3f473a4d976777dd86233213cbe29f3360554ff1e484c719a",
-    "db/001_core.sql": "d0e5fc64ef316597aba4e2bbd8179e46c464ffeb16c6d377908be93045d10083",
-    "db/002_core_processing.sql": "0e2f841d04d94a74d9d53343af272e83416368010baa7b40262caf68e7ceb2e1"
-  },
   "javascript": {
-    "executed": 9,
-    "passed": 9,
+    "executed": 10,
+    "passed": 10,
     "failed": 0,
     "skipped": 0
   }

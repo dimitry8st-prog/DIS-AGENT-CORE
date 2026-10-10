@@ -146,3 +146,16 @@ test('duplicate/busy/failed reservations produce terminal responses', () => {
     assert.equal(result.http_status,http);
   }
 });
+
+
+test('fallback Telegram IDs reject unsafe numeric components and preserve strings', () => {
+  const message = (chat, id) => ({message:{from:{id:1},chat:{id:chat},message_id:id}});
+  for (const body of [message(1,9007199254740992),message(9007199254740992,7),
+    message({},7),message(1,1.5)]) assert.equal(intake(body).valid,false);
+  const a = intake(message('1','9007199254740992'));
+  const b = intake(message('1','9007199254740993'));
+  assert.equal(a.valid,true);
+  assert.equal(b.valid,true);
+  assert.notEqual(a.event_id,b.event_id);
+  assert.equal(intake(message(-100,7)).event_id,'tg_-100:7');
+});
