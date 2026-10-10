@@ -2,45 +2,66 @@
   "name": "WF-01 SYS Idempotency",
   "nodes": [
     {
-      "parameters": {},
-      "id": "wf01-trigger",
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "execute-workflow-trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        -520,
+        0,
         0
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT event_id, status, correlation_id FROM processed_events WHERE event_id = $1 LIMIT 1;",
+        "query": "SELECT dis_core_reserve($1::jsonb) AS result;",
         "options": {
-          "queryReplacement": "={{ [$json.event_id] }}"
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
         }
       },
-      "id": "wf01-check",
-      "name": "Check processed_events",
+      "id": "reserve-event",
+      "name": "Reserve Event",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -280,
+        220,
         0
       ],
-      "notes": "Назначьте PostgreSQL credentials после импорта."
+      "credentials": {
+        "postgres": {
+          "id": "DIS_CORE_POSTGRES",
+          "name": "DIS Core PostgreSQL"
+        }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "const input = $('Execute Workflow Trigger').first().json;\\nconst row = $input.first()?.json ?? {};\\nif (row.event_id) return [{json:{...input,idempotency:{duplicate:row.status==='completed',busy:row.status==='processing',existing_status:row.status}}}];\\nreturn [{json:{...input,idempotency:{duplicate:false,busy:false,existing_status:null,should_insert:true}}}];"
+        "jsCode": "const j = $json.result;\nif (!j || typeof j !== 'object') throw new Error('Invalid database result');\nreturn [{json:j}];\n"
       },
-      "id": "wf01-decision",
+      "id": "idempotency-decision",
       "name": "Idempotency Decision",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -40,
+        440,
         0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $('Execute Workflow Trigger').first().json;\nreturn [{json:{...j,error_code:'core_processing_error'}}];\n"
+      },
+      "id": "safe-database-error",
+      "name": "Safe Database Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        220
       ]
     }
   ],
@@ -49,18 +70,25 @@
       "main": [
         [
           {
-            "node": "Check processed_events",
+            "node": "Reserve Event",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Check processed_events": {
+    "Reserve Event": {
       "main": [
         [
           {
             "node": "Idempotency Decision",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Safe Database Error",
             "type": "main",
             "index": 0
           }
@@ -70,8 +98,15 @@
   },
   "pinData": {},
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60,
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "active": false,
-  "tags": []
+  "tags": [],
+  "id": "disCoreWF01"
 }

@@ -2,45 +2,66 @@
   "name": "WF-02 SYS User Auth",
   "nodes": [
     {
-      "parameters": {},
-      "id": "wf02-trigger",
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "execute-workflow-trigger",
       "name": "Execute Workflow Trigger",
       "type": "n8n-nodes-base.executeWorkflowTrigger",
       "typeVersion": 1.1,
       "position": [
-        -520,
+        0,
         0
       ]
     },
     {
       "parameters": {
         "operation": "executeQuery",
-        "query": "SELECT id, telegram_id, email, status FROM users WHERE telegram_id = $1 LIMIT 1;",
+        "query": "SELECT dis_core_auth($1::jsonb) AS result;",
         "options": {
-          "queryReplacement": "={{ [Number($json.user_id)] }}"
+          "queryReplacement": "={{ [JSON.stringify($json)] }}"
         }
       },
-      "id": "wf02-user",
+      "id": "find-user",
       "name": "Find User",
       "type": "n8n-nodes-base.postgres",
       "typeVersion": 2.6,
       "position": [
-        -280,
+        220,
         0
       ],
-      "notes": "Назначьте PostgreSQL credentials после импорта."
+      "credentials": {
+        "postgres": {
+          "id": "DIS_CORE_POSTGRES",
+          "name": "DIS Core PostgreSQL"
+        }
+      },
+      "onError": "continueErrorOutput"
     },
     {
       "parameters": {
-        "jsCode": "const input = $('Execute Workflow Trigger').first().json;\\nconst user = $input.first()?.json ?? {};\\nconst found = Boolean(user.id);\\nreturn [{json:{...input,auth:{found,registration_required:!found,user:found?user:null}}}];"
+        "jsCode": "const j = $json.result;\nif (!j || typeof j !== 'object') throw new Error('Invalid database result');\nreturn [{json:j}];\n"
       },
-      "id": "wf02-result",
+      "id": "auth-result",
       "name": "Auth Result",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
-        -40,
+        440,
         0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const j = $('Execute Workflow Trigger').first().json;\nreturn [{json:{...j,error_code:'core_processing_error'}}];\n"
+      },
+      "id": "safe-database-error",
+      "name": "Safe Database Error",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        440,
+        220
       ]
     }
   ],
@@ -64,14 +85,28 @@
             "type": "main",
             "index": 0
           }
+        ],
+        [
+          {
+            "node": "Safe Database Error",
+            "type": "main",
+            "index": 0
+          }
         ]
       ]
     }
   },
   "pinData": {},
   "settings": {
-    "executionOrder": "v1"
+    "executionOrder": "v1",
+    "saveDataErrorExecution": "none",
+    "saveDataSuccessExecution": "none",
+    "saveManualExecutions": false,
+    "saveExecutionProgress": false,
+    "executionTimeout": 60,
+    "callerPolicy": "workflowsFromSameOwner"
   },
   "active": false,
-  "tags": []
+  "tags": [],
+  "id": "disCoreWF02"
 }
