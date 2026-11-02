@@ -3,7 +3,8 @@ Date: 2026-11-02
 
 BASE_SHA: 95b823dc69b93ae12ab8c22c0d0abd65d87b71a0
 BRANCH: hardening/scoped-ingress
-FINAL_SHA: a64aa1629fc39e4face7c4d18f1f851384127551
+FINAL_SHA: e268d00 (tip); substantive hardening commit a64aa1629fc39e4face7c4d18f1f851384127551
+PR: https://github.com/dimitry8st-prog/DIS-AGENT-CORE/pull/1
 
 CHANGED / ADDED FILES (principal):
   ingress/package.json
