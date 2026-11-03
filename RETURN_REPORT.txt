@@ -5,7 +5,7 @@ BASE_SHA (main): 95b823dc69b93ae12ab8c22c0d0abd65d87b71a0
 DOCS_PILOT: fb2cfbff979911c50549fb793b1aab8710473eb4 (docs/antigravity-codex-pilot)
 BRANCH: hardening/scoped-ingress
 PRIOR_TIP: 44baaaa64ddacebd3b4e7e372b8a30eb61aaa75d
-FINAL_SHA: (filled after commit; see git rev-parse HEAD)
+FINAL_SHA: b4f85c4f6cf8a0a00858a029b04ca721b115e77e
 PR: https://github.com/dimitry8st-prog/DIS-AGENT-CORE/pull/1
 
 CHANGED / ADDED (this stage, cumulative on branch):
