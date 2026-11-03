@@ -12,8 +12,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-      - name: Workflow unit tests
-        run: node --test tests/workflows.test.mjs
+      - name: Workflow + prepare-import unit tests
+        run: node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
       - name: Ingress unit tests
         working-directory: ingress
         run: node --test test/*.test.mjs

@@ -23,17 +23,34 @@ class SQLTests(unittest.TestCase):
         assert DB == 'dis_core_workflows_test'
         cls.prefix = 'sql-' + uuid.uuid4().hex
 
-    def contract(self, suffix):
-        return {'event_id':self.prefix + '-' + suffix,'correlation_id':'COR-' + uuid.uuid4().hex,
-                'source':'webhook','event_type':'message','execution_id':uuid.uuid4().hex,
-                'user_id':None,'valid':True,'payload':{'token':'SQL-SECRET-MARKER'}}
+    def contract(self, suffix, dialogue_id=None):
+        external = self.prefix + '-' + suffix
+        dialogue = dialogue_id or f'dlg-{suffix}'
+        return {
+            'event_id': f'webhook|proj_demo|bot_a|{external}',
+            'external_event_id': external,
+            'channel': 'webhook',
+            'project_id': 'proj_demo',
+            'bot_id': 'bot_a',
+            'source_id': 'api-demo',
+            'dialogue_id': dialogue,
+            'correlation_id': 'COR-' + uuid.uuid4().hex,
+            'source': 'webhook',
+            'event_type': 'message',
+            'execution_id': uuid.uuid4().hex,
+            'user_id': None,
+            'valid': True,
+            'payload': {'token': 'SQL-SECRET-MARKER'},
+        }
 
     def test_migrations_repeat_and_preserve_data(self):
         j = function('dis_core_reserve', self.contract('migration'))
         sql((ROOT/'db/001_core.sql').read_text())
         sql((ROOT/'db/002_core_processing.sql').read_text())
+        sql((ROOT/'db/003_scoped_ingress.sql').read_text())
         self.assertEqual(sql(f"SELECT status FROM processed_events WHERE event_id='{j['event_id']}';"), 'processing')
-        self.assertEqual(sql("SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"), '7')
+        # 001:7 tables + legacy_event_scope_map + legacy_context_scope_map + bot_context_scoped
+        self.assertEqual(sql("SELECT count(*) FROM information_schema.tables WHERE table_schema='public';"), '10')
 
     def test_atomic_concurrent_reservation(self):
         j = self.contract('race')
@@ -76,29 +93,47 @@ class SQLTests(unittest.TestCase):
 
     def test_lock_ownership_release(self):
         user = sql("INSERT INTO users DEFAULT VALUES RETURNING id;").splitlines()[0]
-        sql(f"INSERT INTO bot_context(user_id,state,payload) VALUES('{user}','awaiting_input','{{\"token\":\"SQL-SECRET-MARKER\"}}');")
-        j = function('dis_core_reserve',self.contract('context'))
-        j['auth'] = {'allowed':True,'user':{'id':user}}
-        j = function('dis_core_context',j)
+        dialogue = f'dlg-context-{uuid.uuid4().hex[:8]}'
+        sql(
+            "INSERT INTO bot_context_scoped(project_id,bot_id,channel,dialogue_id,user_id,state,payload) "
+            f"VALUES('proj_demo','bot_a','webhook','{dialogue}','{user}','awaiting_input',"
+            "'{\"token\":\"SQL-SECRET-MARKER\"}');"
+        )
+        j = function('dis_core_reserve', self.contract('context', dialogue_id=dialogue))
+        j['auth'] = {'allowed': True, 'user': {'id': user}}
+        j = function('dis_core_context', j)
         self.assertTrue(j['context']['lock_acquired'])
-        self.assertEqual(j['context']['payload'],{})
-        other = function('dis_core_context',{**j,'execution_id':'other'})
+        self.assertEqual(j['context']['payload'], {})
+        other = function('dis_core_context', {**j, 'execution_id': 'other'})
         self.assertTrue(other['context']['processing_lock'])
         self.assertFalse(other['context']['lock_acquired'])
-        function('dis_core_finish',{**j,'execution_id':'other'})
-        self.assertEqual(sql(f"SELECT processing_lock FROM bot_context WHERE user_id='{user}';"),'t')
-        function('dis_core_finish',j)
-        self.assertEqual(sql(f"SELECT processing_lock FROM bot_context WHERE user_id='{user}';"),'f')
+        function('dis_core_finish', {**j, 'execution_id': 'other'})
+        self.assertEqual(sql(
+            "SELECT processing_lock FROM bot_context_scoped "
+            f"WHERE project_id='proj_demo' AND bot_id='bot_a' AND channel='webhook' AND dialogue_id='{dialogue}';"
+        ), 't')
+        function('dis_core_finish', j)
+        self.assertEqual(sql(
+            "SELECT processing_lock FROM bot_context_scoped "
+            f"WHERE project_id='proj_demo' AND bot_id='bot_a' AND channel='webhook' AND dialogue_id='{dialogue}';"
+        ), 'f')
 
     def test_stale_missing_timestamp_is_not_silently_reclaimed(self):
         user = sql("INSERT INTO users DEFAULT VALUES RETURNING id;").splitlines()[0]
-        sql(f"INSERT INTO bot_context(user_id,processing_lock,lock_owner) VALUES('{user}',true,'unrelated-owner');")
-        j = self.contract('stale')
-        j['auth'] = {'allowed':True,'user':{'id':user}}
-        result = function('dis_core_context',j)
+        dialogue = f'dlg-stale-{uuid.uuid4().hex[:8]}'
+        sql(
+            "INSERT INTO bot_context_scoped(project_id,bot_id,channel,dialogue_id,user_id,processing_lock,lock_owner) "
+            f"VALUES('proj_demo','bot_a','webhook','{dialogue}','{user}',true,'unrelated-owner');"
+        )
+        j = self.contract('stale', dialogue_id=dialogue)
+        j['auth'] = {'allowed': True, 'user': {'id': user}}
+        result = function('dis_core_context', j)
         self.assertTrue(result['context']['stale'])
         self.assertFalse(result['context']['lock_acquired'])
-        self.assertEqual(sql(f"SELECT lock_owner FROM bot_context WHERE user_id='{user}';"),'unrelated-owner')
+        self.assertEqual(sql(
+            "SELECT lock_owner FROM bot_context_scoped "
+            f"WHERE project_id='proj_demo' AND bot_id='bot_a' AND channel='webhook' AND dialogue_id='{dialogue}';"
+        ), 'unrelated-owner')
 
     def test_logs_never_store_secret_payload(self):
         j = function('dis_core_reserve',self.contract('privacy'))

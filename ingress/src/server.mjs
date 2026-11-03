@@ -18,17 +18,26 @@ function readBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
+    let settled = false;
     req.on('data', (chunk) => {
       size += chunk.length;
       if (size > maxBytes) {
-        reject(Object.assign(new Error('payload_too_large'), { code: 413 }));
-        req.destroy();
+        if (!settled) {
+          settled = true;
+          reject(Object.assign(new Error('payload_too_large'), { code: 413 }));
+        }
+        // Drain without destroying so the handler can still send HTTP 413.
+        req.resume();
         return;
       }
       chunks.push(chunk);
     });
-    req.on('end', () => resolve(Buffer.concat(chunks)));
-    req.on('error', reject);
+    req.on('end', () => {
+      if (!settled) resolve(Buffer.concat(chunks));
+    });
+    req.on('error', (err) => {
+      if (!settled) reject(err);
+    });
   });
 }
 

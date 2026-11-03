@@ -246,3 +246,29 @@ test('refuses to load config without sources or with non-loopback upstream', asy
   writeFileSync(empty, JSON.stringify({ n8n_upstream_url: 'http://127.0.0.1:5678/webhook/x', sources: [] }));
   assert.throws(() => loadConfig(empty), /non-empty/);
 });
+
+test('oversized body rejected before upstream; response never echoes credentials', async () => {
+  let hit = 0;
+  const upstream = http.createServer((_req, res) => { hit += 1; res.end('{}'); });
+  const upPort = await listen(upstream);
+  const config = setupConfig(`http://127.0.0.1:${upPort}/webhook/dis-agent-core`);
+  config.max_body_bytes = 64;
+  const gateway = createServer(config);
+  const port = await listen(gateway);
+  try {
+    const huge = {
+      update_id: 1,
+      message: { from: { id: 1 }, chat: { id: 1 }, text: 'x'.repeat(200) },
+    };
+    const result = await post(port, '/ingress/telegram/bot_a', huge, {
+      'x-telegram-bot-api-secret-token': SECRET_A,
+    });
+    assert.equal(result.status, 413);
+    assert.equal(result.json.error, 'payload_too_large');
+    assert.equal(hit, 0);
+    assert(!JSON.stringify(result).includes(SECRET_A));
+  } finally {
+    gateway.close();
+    upstream.close();
+  }
+});

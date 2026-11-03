@@ -1,25 +1,23 @@
 RETURN_REPORT — DIS-AGENT-CORE hardening/scoped-ingress
-Date: 2026-11-02
+Report date: 2026-11-03
 
-BASE_SHA: 95b823dc69b93ae12ab8c22c0d0abd65d87b71a0
+BASE_SHA (main): 95b823dc69b93ae12ab8c22c0d0abd65d87b71a0
+DOCS_PILOT: fb2cfbff979911c50549fb793b1aab8710473eb4 (docs/antigravity-codex-pilot)
 BRANCH: hardening/scoped-ingress
-FINAL_SHA: e268d00 (tip); substantive hardening commit a64aa1629fc39e4face7c4d18f1f851384127551
+PRIOR_TIP: 44baaaa64ddacebd3b4e7e372b8a30eb61aaa75d
+FINAL_SHA: (filled after commit; see git rev-parse HEAD)
 PR: https://github.com/dimitry8st-prog/DIS-AGENT-CORE/pull/1
 
-CHANGED / ADDED FILES (principal):
-  ingress/package.json
-  ingress/README.md
-  ingress/config/sources.example.json
-  ingress/src/config.mjs
-  ingress/src/auth.mjs
-  ingress/src/rate-limit.mjs
-  ingress/src/server.mjs
-  ingress/test/auth.test.mjs
-  ingress/test/server.test.mjs
+CHANGED / ADDED (this stage, cumulative on branch):
+  ingress/** (gateway + tests)
   db/003_scoped_ingress.sql
   workflows/WF-00_SYS_Event_Intake.json
+  scripts/prepare-import.py
+  scripts/mapping.example.json
   tests/workflows.test.mjs
   tests/sql_scoped.test.mjs
+  tests/prepare_import.test.mjs
+  tests/test_sql.py (scoped contracts; still requires isolated cloud helper — do not run on shared infra)
   teststand/docker-compose.yml
   .github/workflows/ci.yml
   docs/HARDENING_REPORT.md
@@ -27,35 +25,38 @@ CHANGED / ADDED FILES (principal):
   README.md
   RETURN_REPORT.txt
 
-COMMANDS RUN:
-  node --test tests/workflows.test.mjs
+COMMANDS (2026-11-03):
+  node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
   node --test ingress/test/*.test.mjs
   docker compose -f teststand/docker-compose.yml up -d postgres
-  DIS_TEST_PSQL_DOCKER=teststand-postgres-1 node --test tests/sql_scoped.test.mjs
+  set DIS_TEST_PSQL_DOCKER=teststand-postgres-1
+  node --test tests/sql_scoped.test.mjs
 
 RESULTS:
-  workflows.test.mjs ................ PASS (11)
-  ingress tests ..................... PASS (10)
-  sql_scoped.test.mjs ............... PASS (2)
-  migration 003 re-apply ............ PASS
-  full n8n E2E / run_cloud.py ....... BLOCKED (shared-infra policy + private 2.42.6 image)
-  n8n soft-delete retention ......... EXPECTED_FAILURE (documented; not weakened)
+  workflows + prepare-import .... PASS (13)
+  ingress tests ................. PASS (11)
+  sql_scoped.test.mjs ........... PASS (5)
+  migration 003 re-apply ........ PASS
+  concurrent same-scope reserve . PASS
+  unknown/blocked/expired/foreign PASS
+  DB fault before/after reserve . PASS (isolated teststand only)
+  full n8n E2E / run_cloud.py ... BLOCKED
+  n8n soft-delete retention ..... EXPECTED_FAILURE (not weakened)
 
 LIMITATIONS:
-  - End-user identity is not proven by users.telegram_id lookup.
-  - Service/webhook auth ≠ end-user authentication.
-  - n8n save=none soft-delete residual storage remains open.
-  - Payment/order/approval/LLM/registration not implemented.
-  - Stage is not production-ready certification.
+  - telegram_id lookup ≠ end-user authentication
+  - service/webhook auth ≠ end-user authentication
+  - n8n soft-delete residual storage open
+  - payments/orders/LLM/registration not implemented
+  - stage is not production-ready
 
 OPERATOR VERIFY:
   git fetch && git checkout hardening/scoped-ingress
-  node --test tests/workflows.test.mjs
+  node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
   cd ingress && node --test test/*.test.mjs
   docker compose -f teststand/docker-compose.yml up -d postgres
-  # Windows cmd:
   set DIS_TEST_PSQL_DOCKER=teststand-postgres-1
   node --test tests/sql_scoped.test.mjs
 
 NEXT STEP:
-  Private n8n 2.42.6 stand behind ingress; operator legacy scope maps; no auto-retry.
+  Private n8n 2.42.6 behind ingress; operator legacy scope maps; no auto-retry.

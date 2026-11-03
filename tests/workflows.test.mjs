@@ -197,3 +197,24 @@ test('two projects for one user keep independent event namespaces', () => {
   assert.notEqual(p1.event_id, p2.event_id);
   assert.equal(p1.user_id, p2.user_id);
 });
+
+test('unknown and blocked users produce safe terminal HTTP responses', () => {
+  const base = intake(trusted({ external_event_id: 'auth-cases', payload: { text: '/help' } }));
+  const unknown = run(0, 'Safe Response', {
+    ...base,
+    auth: { found: false, registration_required: true, allowed: false },
+    routing: { route: 'auth', reason: 'registration_required' },
+  })[0].json;
+  assert.equal(unknown.http_status, 200);
+  assert.equal(unknown.body.status, 'registration_required');
+  assert.equal(unknown.body.auth.registration_required, true);
+
+  const blocked = run(0, 'Safe Response', {
+    ...base,
+    auth: { found: true, registration_required: false, allowed: false },
+    routing: { route: 'unknown', reason: 'access_denied' },
+  })[0].json;
+  assert.equal(blocked.http_status, 403);
+  assert.equal(blocked.body.status, 'rejected');
+  assert(!JSON.stringify(blocked).includes('password'));
+});
