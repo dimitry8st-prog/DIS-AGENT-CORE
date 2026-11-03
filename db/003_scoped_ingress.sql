@@ -15,6 +15,30 @@ ALTER TABLE processed_events
 CREATE INDEX IF NOT EXISTS idx_processed_events_scope
   ON processed_events(project_id, bot_id, channel, external_event_id);
 
+-- Durable identity for confirmed scope: legacy event_id (e.g. tg_42) and WF-00 composite
+-- (telegram|project|bot|42) must not both reserve the same logical event.
+-- Partial: unscoped legacy NULLs stay allowed. Created only when preflight finds no dupes.
+DO $$
+DECLARE
+  dup_groups BIGINT;
+BEGIN
+  SELECT count(*) INTO dup_groups FROM (
+    SELECT 1 FROM processed_events
+    WHERE project_id IS NOT NULL AND bot_id IS NOT NULL
+      AND channel IS NOT NULL AND external_event_id IS NOT NULL
+    GROUP BY project_id, bot_id, channel, external_event_id
+    HAVING count(*) > 1
+  ) d;
+  IF dup_groups = 0 THEN
+    EXECUTE $idx$
+      CREATE UNIQUE INDEX IF NOT EXISTS uq_processed_events_scope_identity
+      ON processed_events (project_id, bot_id, channel, external_event_id)
+      WHERE project_id IS NOT NULL AND bot_id IS NOT NULL
+        AND channel IS NOT NULL AND external_event_id IS NOT NULL
+    $idx$;
+  END IF;
+END $$;
+
 -- Operator-supplied mapping for legacy unscoped events. Empty until filled deliberately.
 CREATE TABLE IF NOT EXISTS legacy_event_scope_map (
   event_id TEXT PRIMARY KEY REFERENCES processed_events(event_id),
@@ -63,6 +87,7 @@ CREATE INDEX IF NOT EXISTS idx_bot_context_scoped_user
   ON bot_context_scoped(user_id, project_id, bot_id);
 
 -- Dry-run: report legacy events that still lack scope and any conflicting map entries.
+-- Never deletes rows; never auto-assigns project/bot/channel.
 CREATE OR REPLACE FUNCTION dis_core_legacy_event_scope_dry_run()
 RETURNS JSONB
 LANGUAGE plpgsql STABLE AS $$
@@ -70,6 +95,11 @@ DECLARE
   unscoped BIGINT;
   mapped BIGINT;
   conflicts BIGINT;
+  scope_identity_conflicts BIGINT;
+  data_dup_groups BIGINT;
+  map_dup_groups BIGINT;
+  map_vs_other BIGINT;
+  unique_index_present BOOLEAN;
 BEGIN
   SELECT count(*) INTO unscoped FROM processed_events
     WHERE project_id IS NULL OR bot_id IS NULL OR channel IS NULL OR external_event_id IS NULL;
@@ -84,23 +114,68 @@ BEGIN
       e.channel IS DISTINCT FROM m.channel OR
       e.external_event_id IS DISTINCT FROM m.external_event_id
     );
+  SELECT count(*) INTO data_dup_groups FROM (
+    SELECT 1 FROM processed_events
+    WHERE project_id IS NOT NULL AND bot_id IS NOT NULL
+      AND channel IS NOT NULL AND external_event_id IS NOT NULL
+    GROUP BY project_id, bot_id, channel, external_event_id
+    HAVING count(*) > 1
+  ) d;
+  SELECT count(*) INTO map_dup_groups FROM (
+    SELECT 1 FROM legacy_event_scope_map
+    GROUP BY channel, project_id, bot_id, external_event_id
+    HAVING count(*) > 1
+  ) d;
+  SELECT count(*) INTO map_vs_other FROM legacy_event_scope_map m
+    JOIN processed_events e
+      ON e.project_id = m.project_id AND e.bot_id = m.bot_id
+     AND e.channel = m.channel AND e.external_event_id = m.external_event_id
+     AND e.event_id IS DISTINCT FROM m.event_id;
+  scope_identity_conflicts := data_dup_groups + map_dup_groups + map_vs_other;
+  SELECT EXISTS (
+    SELECT 1 FROM pg_indexes
+    WHERE schemaname = ANY (current_schemas(false))
+      AND indexname = 'uq_processed_events_scope_identity'
+  ) INTO unique_index_present;
   RETURN jsonb_build_object(
     'unscoped_events', unscoped,
     'mapped_pending', mapped,
     'conflicts', conflicts,
+    'scope_identity_conflicts', scope_identity_conflicts,
+    'data_duplicate_scope_groups', data_dup_groups,
+    'map_duplicate_scope_groups', map_dup_groups,
+    'map_conflicts_with_other_event', map_vs_other,
+    'unique_index_present', unique_index_present,
     'auto_assign', false,
-    'note', 'Fill legacy_event_scope_map explicitly; call dis_core_legacy_event_scope_apply() only after review.'
+    'note', 'Fill legacy_event_scope_map explicitly; resolve scope_identity_conflicts before apply. No auto-assign.'
   );
 END;
 $$;
 
 -- Apply only explicitly mapped rows. Never invents project_id. Idempotent.
+-- Refuses when dry-run reports scope identity conflicts; does not delete rows.
 CREATE OR REPLACE FUNCTION dis_core_legacy_event_scope_apply()
 RETURNS JSONB
 LANGUAGE plpgsql VOLATILE AS $$
 DECLARE
   updated_count BIGINT := 0;
+  preflight JSONB;
+  conflict_count BIGINT;
 BEGIN
+  preflight := dis_core_legacy_event_scope_dry_run();
+  conflict_count := coalesce((preflight->>'scope_identity_conflicts')::bigint, 0)
+    + coalesce((preflight->>'conflicts')::bigint, 0);
+  IF conflict_count > 0 THEN
+    RETURN jsonb_build_object(
+      'updated', 0,
+      'statuses_preserved', true,
+      'event_ids_preserved', true,
+      'refused_due_to_conflicts', true,
+      'scope_identity_conflicts', (preflight->>'scope_identity_conflicts')::bigint,
+      'conflicts', (preflight->>'conflicts')::bigint
+    );
+  END IF;
+
   UPDATE processed_events e SET
     channel = m.channel,
     project_id = m.project_id,
@@ -118,11 +193,12 @@ BEGIN
     AND position('|' in m.bot_id) = 0;
   GET DIAGNOSTICS updated_count = ROW_COUNT;
   -- Remapping MUST NOT reopen completed/failed/processing events for reprocessing.
-  -- event_id (PK) and status are intentionally unchanged.
+  -- event_id (PK), status, and correlation_id are intentionally unchanged.
   RETURN jsonb_build_object(
     'updated', updated_count,
     'statuses_preserved', true,
-    'event_ids_preserved', true
+    'event_ids_preserved', true,
+    'refused_due_to_conflicts', false
   );
 END;
 $$;
@@ -174,40 +250,80 @@ DECLARE
   inserted BOOLEAN := false;
   existing processed_events%ROWTYPE;
   eid TEXT := p->>'event_id';
+  ch TEXT := p->>'channel';
+  pid TEXT := p->>'project_id';
+  bid TEXT := p->>'bot_id';
+  ext TEXT := p->>'external_event_id';
+  scope_key TEXT;
 BEGIN
-  IF coalesce(p->>'project_id','') = '' OR coalesce(p->>'bot_id','') = ''
-     OR coalesce(p->>'channel','') = '' OR coalesce(p->>'external_event_id','') = '' THEN
+  IF coalesce(pid,'') = '' OR coalesce(bid,'') = ''
+     OR coalesce(ch,'') = '' OR coalesce(ext,'') = '' THEN
     RETURN p || jsonb_build_object('idempotency', jsonb_build_object(
       'acquired', false, 'duplicate', false, 'busy', false, 'failed', false,
-      'existing_status', null, 'rejected', true, 'reason', 'missing_scope'));
+      'existing_status', null, 'existing_event_id', null,
+      'rejected', true, 'reason', 'missing_scope'));
   END IF;
 
-  INSERT INTO processed_events(
-    event_id, source, correlation_id, workflow_execution_id,
-    channel, project_id, bot_id, external_event_id, source_id
-  )
-  VALUES(
-    eid, p->>'source', p->>'correlation_id', p->>'execution_id',
-    p->>'channel', p->>'project_id', p->>'bot_id', p->>'external_event_id', p->>'source_id'
-  )
-  ON CONFLICT (event_id) DO NOTHING RETURNING true INTO inserted;
+  -- Serialize by confirmed scope identity (not only event_id) so legacy tg_42 and
+  -- composite telegram|project|bot|42 cannot both acquire under concurrency.
+  scope_key := ch || E'\x1f' || pid || E'\x1f' || bid || E'\x1f' || ext;
+  PERFORM pg_advisory_xact_lock(hashtext(scope_key), hashtext(reverse(scope_key)));
+
+  SELECT * INTO existing FROM processed_events
+  WHERE project_id = pid AND bot_id = bid AND channel = ch AND external_event_id = ext
+  LIMIT 1;
+  IF FOUND THEN
+    RETURN p || jsonb_build_object('correlation_id', existing.correlation_id,
+      'idempotency', jsonb_build_object('acquired', false,
+        'duplicate', existing.status = 'completed',
+        'busy', existing.status = 'processing',
+        'failed', existing.status NOT IN ('completed', 'processing'),
+        'existing_status', existing.status,
+        'existing_event_id', existing.event_id,
+        'rejected', false));
+  END IF;
+
+  BEGIN
+    INSERT INTO processed_events(
+      event_id, source, correlation_id, workflow_execution_id,
+      channel, project_id, bot_id, external_event_id, source_id
+    )
+    VALUES(
+      eid, p->>'source', p->>'correlation_id', p->>'execution_id',
+      ch, pid, bid, ext, p->>'source_id'
+    )
+    ON CONFLICT (event_id) DO NOTHING RETURNING true INTO inserted;
+  EXCEPTION WHEN unique_violation THEN
+    -- Partial unique index on scope identity (different event_id, same scope).
+    SELECT * INTO STRICT existing FROM processed_events
+    WHERE project_id = pid AND bot_id = bid AND channel = ch AND external_event_id = ext;
+    RETURN p || jsonb_build_object('correlation_id', existing.correlation_id,
+      'idempotency', jsonb_build_object('acquired', false,
+        'duplicate', existing.status = 'completed',
+        'busy', existing.status = 'processing',
+        'failed', existing.status NOT IN ('completed', 'processing'),
+        'existing_status', existing.status,
+        'existing_event_id', existing.event_id,
+        'rejected', false));
+  END;
 
   IF coalesce(inserted, false) THEN
     INSERT INTO event_log(event_id, correlation_id, source, event_type, sanitized_payload)
     VALUES(eid, p->>'correlation_id', p->>'source', p->>'event_type', '{}');
     RETURN p || jsonb_build_object('idempotency', jsonb_build_object(
       'acquired', true, 'duplicate', false, 'busy', false, 'failed', false,
-      'existing_status', null, 'rejected', false));
+      'existing_status', null, 'existing_event_id', null, 'rejected', false));
   END IF;
 
   SELECT * INTO STRICT existing FROM processed_events WHERE event_id = eid;
-  -- Same internal key always same scope; cross-bot independence comes from distinct event_id.
   RETURN p || jsonb_build_object('correlation_id', existing.correlation_id,
     'idempotency', jsonb_build_object('acquired', false,
       'duplicate', existing.status = 'completed',
       'busy', existing.status = 'processing',
       'failed', existing.status NOT IN ('completed', 'processing'),
-      'existing_status', existing.status, 'rejected', false));
+      'existing_status', existing.status,
+      'existing_event_id', existing.event_id,
+      'rejected', false));
 END;
 $$;
 

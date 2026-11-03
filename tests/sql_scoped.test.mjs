@@ -159,10 +159,12 @@ test('migrations apply twice; legacy dry-run; cross-bot independence; context is
   }).idempotency.rejected, true);
 
   const legacyId = 'tg_legacy_' + randomUUID().slice(0, 8);
+  const legacyExt = '99-' + randomUUID().slice(0, 8);
+  const legacyCorr = 'COR-legacy-' + randomUUID().slice(0, 8);
   psql(`INSERT INTO processed_events(event_id,source,status,correlation_id)
-    VALUES('${legacyId}','telegram','completed','COR-legacy');`);
+    VALUES('${legacyId}','telegram','completed','${legacyCorr}');`);
   psql(`INSERT INTO legacy_event_scope_map(event_id,channel,project_id,bot_id,external_event_id,confirmed_by)
-    VALUES('${legacyId}','telegram','proj_legacy','bot_legacy','99','operator-test');`);
+    VALUES('${legacyId}','telegram','proj_legacy','bot_legacy','${legacyExt}','operator-test');`);
   const applied = JSON.parse(psql('SELECT dis_core_legacy_event_scope_apply();'));
   assert.ok(applied.updated >= 1);
   assert.equal(applied.event_ids_preserved, true);
@@ -171,10 +173,95 @@ test('migrations apply twice; legacy dry-run; cross-bot independence; context is
     event_id: legacyId,
     project_id: 'proj_legacy',
     bot_id: 'bot_legacy',
-    external_event_id: '99',
+    external_event_id: legacyExt,
   })).idempotency.duplicate, true);
 
+  // New WF-00 composite key must collide with confirmed legacy scope (not only old event_id).
+  const compositeId = `telegram|proj_legacy|bot_legacy|${legacyExt}`;
+  const afterMigrate = call('dis_core_reserve', scopedContract({
+    event_id: compositeId,
+    project_id: 'proj_legacy',
+    bot_id: 'bot_legacy',
+    external_event_id: legacyExt,
+  }));
+  assert.equal(afterMigrate.idempotency.acquired, false);
+  assert.equal(afterMigrate.idempotency.duplicate, true);
+  assert.equal(afterMigrate.correlation_id, legacyCorr);
+  assert.equal(afterMigrate.idempotency.existing_event_id, legacyId);
+  assert.equal(psql(`SELECT count(*) FROM processed_events WHERE external_event_id='${legacyExt}'
+    AND project_id='proj_legacy' AND bot_id='bot_legacy' AND channel='telegram';`), '1');
+  assert.equal(psql(`SELECT event_id FROM processed_events WHERE event_id='${legacyId}';`), legacyId);
+  assert.equal(psql(`SELECT correlation_id FROM processed_events WHERE event_id='${legacyId}';`), legacyCorr);
+
   assert.equal(psql(`SELECT sanitized_payload::text FROM event_log WHERE event_id='${a.event_id}';`), '{}');
+});
+
+test('legacy scope apply then composite event_id: no second reservation (regression)', {
+  skip: !hasDb && 'DIS_TEST_DATABASE_URL or DIS_TEST_PSQL_DOCKER unset',
+}, () => {
+  applyMigrations();
+  // Mirrors legacy key tg_42 vs WF-00 composite telegram|project|bot|42.
+  const ext = '42-' + randomUUID().slice(0, 8);
+  const oldId = 'tg_' + ext;
+  const corr = 'COR-tg42-' + randomUUID().slice(0, 8);
+  psql(`INSERT INTO processed_events(event_id,source,status,correlation_id)
+    VALUES('${oldId}','telegram','completed','${corr}');`);
+  psql(`INSERT INTO legacy_event_scope_map(event_id,channel,project_id,bot_id,external_event_id,confirmed_by)
+    VALUES('${oldId}','telegram','proj_demo','bot_a','${ext}','operator-regression');`);
+  assert.equal(JSON.parse(psql('SELECT dis_core_legacy_event_scope_apply();')).updated >= 1, true);
+
+  const neu = call('dis_core_reserve', scopedContract({
+    event_id: `telegram|proj_demo|bot_a|${ext}`,
+    project_id: 'proj_demo',
+    bot_id: 'bot_a',
+    external_event_id: ext,
+  }));
+  assert.equal(neu.idempotency.acquired, false, 'must not re-reserve after legacy scope apply');
+  assert.equal(neu.idempotency.duplicate, true);
+  assert.equal(neu.correlation_id, corr);
+  assert.equal(neu.idempotency.existing_event_id, oldId);
+});
+
+test('concurrent reserve: distinct event_id same confirmed scope — exactly one acquired', {
+  skip: !hasDb && 'DIS_TEST_DATABASE_URL or DIS_TEST_PSQL_DOCKER unset',
+}, async () => {
+  applyMigrations();
+  const ext = 'race-scope-' + randomUUID().slice(0, 8);
+  const scope = { channel: 'telegram', project_id: 'proj_demo', bot_id: 'bot_a', external_event_id: ext };
+  const p0 = scopedContract({ ...scope, event_id: `telegram|proj_demo|bot_a|${ext}` });
+  const p1 = scopedContract({ ...scope, event_id: `tg_${ext}` });
+  const lit0 = "'" + JSON.stringify(p0).replaceAll("'", "''") + "'::jsonb";
+  const lit1 = "'" + JSON.stringify(p1).replaceAll("'", "''") + "'::jsonb";
+  const [r0, r1] = await Promise.all([
+    psqlAsync(`SELECT dis_core_reserve(${lit0});`),
+    psqlAsync(`SELECT dis_core_reserve(${lit1});`),
+  ]);
+  const results = [JSON.parse(r0), JSON.parse(r1)];
+  assert.equal(results.filter((r) => r.idempotency.acquired).length, 1);
+  assert.equal(results.filter((r) => !r.idempotency.acquired).length, 1);
+  assert.equal(psql(`SELECT count(*) FROM processed_events WHERE project_id='proj_demo'
+    AND bot_id='bot_a' AND channel='telegram' AND external_event_id='${ext}';`), '1');
+});
+
+test('legacy dry-run reports scope identity conflicts without deleting rows', {
+  skip: !hasDb && 'DIS_TEST_DATABASE_URL or DIS_TEST_PSQL_DOCKER unset',
+}, () => {
+  applyMigrations();
+  const a = 'tg_conflict_a_' + randomUUID().slice(0, 6);
+  const b = 'tg_conflict_b_' + randomUUID().slice(0, 6);
+  psql(`INSERT INTO processed_events(event_id,source,status,correlation_id)
+    VALUES('${a}','telegram','completed','COR-a'),('${b}','telegram','completed','COR-b');`);
+  psql(`INSERT INTO legacy_event_scope_map(event_id,channel,project_id,bot_id,external_event_id,confirmed_by)
+    VALUES('${a}','telegram','proj_c','bot_c','same-ext','op'),
+          ('${b}','telegram','proj_c','bot_c','same-ext','op');`);
+  const dry = JSON.parse(psql('SELECT dis_core_legacy_event_scope_dry_run();'));
+  assert.ok(dry.scope_identity_conflicts >= 1);
+  assert.equal(dry.auto_assign, false);
+  const applied = JSON.parse(psql('SELECT dis_core_legacy_event_scope_apply();'));
+  assert.equal(applied.updated, 0);
+  assert.equal(applied.refused_due_to_conflicts, true);
+  assert.equal(psql(`SELECT count(*) FROM processed_events WHERE event_id IN ('${a}','${b}');`), '2');
+  assert.equal(psql(`SELECT count(*) FROM processed_events WHERE event_id='${a}' AND project_id IS NULL;`), '1');
 });
 
 test('concurrent reserve in one scope: exactly one acquired', {

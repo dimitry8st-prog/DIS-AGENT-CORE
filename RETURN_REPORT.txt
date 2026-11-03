@@ -4,54 +4,65 @@ Report date: 2026-11-03
 BASE_SHA (main): 95b823dc69b93ae12ab8c22c0d0abd65d87b71a0
 DOCS_PILOT: fb2cfbff979911c50549fb793b1aab8710473eb4 (docs/antigravity-codex-pilot)
 BRANCH: hardening/scoped-ingress
-PRIOR_TIP: 44baaaa64ddacebd3b4e7e372b8a30eb61aaa75d
-FINAL_SHA: b4f85c4f6cf8a0a00858a029b04ca721b115e77e
+REVIEWED_SHA (Request changes): 2c8b75036b93726516713e2cae2c8d0642a50ae0
+PRIOR_TIP: 2c8b75036b93726516713e2cae2c8d0642a50ae0
+FIX_STAGE: defect-1 legacy/composite idempotency after scope apply
+
 PR: https://github.com/dimitry8st-prog/DIS-AGENT-CORE/pull/1
 
-CHANGED / ADDED (this stage, cumulative on branch):
-  ingress/** (gateway + tests)
+DEFECT 1 (independent review):
+  Problem: dis_core_legacy_event_scope_apply() fills scope but keeps old event_id
+  (e.g. tg_42). WF-00 builds telegram|project|bot|42. dis_core_reserve() only
+  conflicted on event_id PK → second reservation of the same logical event.
+  Fix:
+    - partial UNIQUE uq_processed_events_scope_identity on confirmed scope
+      (created only when preflight finds no duplicate groups)
+    - dis_core_reserve: advisory_xact_lock on scope + lookup by
+      (project_id,bot_id,channel,external_event_id) before insert; handle
+      unique_violation; return existing correlation_id + existing_event_id
+    - dry-run reports scope_identity_conflicts; apply refuses without deletes
+    - old event_id / status / correlation_id preserved; no auto-assign
+
+CHANGED / ADDED (this stage):
   db/003_scoped_ingress.sql
-  workflows/WF-00_SYS_Event_Intake.json
-  scripts/prepare-import.py
-  scripts/mapping.example.json
-  tests/workflows.test.mjs
   tests/sql_scoped.test.mjs
-  tests/prepare_import.test.mjs
-  tests/test_sql.py (scoped contracts; still requires isolated cloud helper — do not run on shared infra)
-  teststand/docker-compose.yml
-  .github/workflows/ci.yml
   docs/HARDENING_REPORT.md
-  docs/STUCK_EVENT_DIAGNOSIS.md
   README.md
   RETURN_REPORT.txt
 
+BEFORE (reviewed tip, clean schema then failing assertions):
+  legacy apply + composite reserve → idempotency.acquired === true (BUG)
+  concurrent distinct event_id same scope → 2 acquired (BUG)
+  dry-run.scope_identity_conflicts → missing (BUG)
+
+AFTER (same tests):
+  composite after legacy → duplicate=true, correlation_id preserved, existing_event_id=legacy
+  concurrent same scope → exactly 1 acquired
+  dry-run conflicts → apply refused_due_to_conflicts, rows retained
+
 COMMANDS (2026-11-03):
   node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
-  node --test ingress/test/*.test.mjs
-  docker compose -f teststand/docker-compose.yml up -d postgres
+  node --test ingress/test/auth.test.mjs ingress/test/server.test.mjs
   set DIS_TEST_PSQL_DOCKER=teststand-postgres-1
   node --test tests/sql_scoped.test.mjs
 
 RESULTS:
   workflows + prepare-import .... PASS (13)
   ingress tests ................. PASS (11)
-  sql_scoped.test.mjs ........... PASS (5)
+  sql_scoped.test.mjs ........... PASS (8)
+  JS total ...................... PASS (24)
   migration 003 re-apply ........ PASS
-  concurrent same-scope reserve . PASS
-  unknown/blocked/expired/foreign PASS
-  DB fault before/after reserve . PASS (isolated teststand only)
-  full n8n E2E / run_cloud.py ... BLOCKED
-  n8n soft-delete retention ..... EXPECTED_FAILURE (not weakened)
 
 LIMITATIONS:
   - telegram_id lookup ≠ end-user authentication
   - service/webhook auth ≠ end-user authentication
   - n8n soft-delete residual storage open
   - payments/orders/LLM/registration not implemented
+  - existing duplicate scope groups block unique index until operator resolves via dry-run
   - stage is not production-ready
 
 OPERATOR VERIFY:
-  git fetch && git checkout hardening/scoped-ingress
+  git checkout hardening/scoped-ingress
   node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
   cd ingress && node --test test/*.test.mjs
   docker compose -f teststand/docker-compose.yml up -d postgres
@@ -59,4 +70,5 @@ OPERATOR VERIFY:
   node --test tests/sql_scoped.test.mjs
 
 NEXT STEP:
-  Private n8n 2.42.6 behind ingress; operator legacy scope maps; no auto-retry.
+  Commit + push when requested; continue remaining review defects if any;
+  private n8n 2.42.6 behind ingress; operator legacy scope maps; no auto-retry.

@@ -12,12 +12,13 @@ Historical cloud validation results from **2026-10-10** remain in `docs/CORE_WOR
 | Docs pilot branch | `docs/antigravity-codex-pilot` @ `fb2cfbf` (unchanged by this work) |
 | Work branch | `hardening/scoped-ingress` |
 | AGENTS.md | absent |
-| Prior branch tip before this continuation | `44baaaa` |
+| Reviewed tip (Request changes) | `2c8b750` |
+| Prior branch tip before this continuation | `2c8b750` |
 
 ## Implemented in code
 
 1. **ingress/** — Telegram webhook secret (`X-Telegram-Bot-Api-Secret-Token`, ≠ bot token) + API HMAC service auth; server-bound `project_id`/`bot_id`/`channel`; closed without config; body/rate/timeout limits; secret headers stripped; loopback upstream only.
-2. **db/003_scoped_ingress.sql** — additive scope columns, `bot_context_scoped`, legacy maps + dry-run/apply; `dis_core_*` enforce scope; no rewrite of 001/002; no mass unlock/retry.
+2. **db/003_scoped_ingress.sql** — additive scope columns, `bot_context_scoped`, legacy maps + dry-run/apply; partial unique on confirmed scope identity; `dis_core_reserve` matches by scope (legacy `tg_42` ≡ WF-00 composite) under advisory lock + unique index; apply refuses `scope_identity_conflicts` without deletes; no rewrite of 001/002; no mass unlock/retry; no auto-assign of unknown scope.
 3. **WF-00** — accepts only `ingress.authenticated_source` contract; composite `event_id = channel|project|bot|external`.
 4. **prepare-import.py** — rejects public webhook exposure; writes `INGRESS_CONTRACT.json`.
 5. **tests + CI + teststand** — JS/ingress/SQL/prepare-import; GitHub Actions without production secrets.
@@ -29,9 +30,12 @@ Historical cloud validation results from **2026-10-10** remain in `docs/CORE_WOR
 |---|---|
 | `node --test tests/workflows.test.mjs tests/prepare_import.test.mjs` | **PASS** (13) |
 | `node --test ingress/test/*.test.mjs` | **PASS** (11) |
-| `DIS_TEST_PSQL_DOCKER=teststand-postgres-1 node --test tests/sql_scoped.test.mjs` | **PASS** (5) on isolated `postgres:16` |
+| `DIS_TEST_PSQL_DOCKER=teststand-postgres-1 node --test tests/sql_scoped.test.mjs` | **PASS** (8) on isolated `postgres:16` |
 | Migration 003 re-apply | **PASS** |
+| Legacy scope apply → composite `event_id` must not re-reserve | **PASS** (regression; BEFORE acquired=true → AFTER duplicate) |
 | Concurrent reserve one-scope | **PASS** (exactly one acquired) |
+| Concurrent distinct `event_id`, same confirmed scope | **PASS** (exactly one acquired) |
+| Dry-run `scope_identity_conflicts`; apply refuses without deletes | **PASS** |
 | Unknown / blocked user; expired context; foreign lock | **PASS** |
 | DB fault before reserve (no row) / after reserve (stays `processing`) | **PASS** (isolated DB only) |
 | Credential / secret markers in Safe Response & ingress responses | **PASS** |

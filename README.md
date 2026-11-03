@@ -64,11 +64,11 @@ psql -v ON_ERROR_STOP=1 "$DIS_TEST_DATABASE_URL" -f db/002_core_processing.sql
 psql -v ON_ERROR_STOP=1 "$DIS_TEST_DATABASE_URL" -f db/003_scoped_ingress.sql
 ```
 
-`003` аддитивна: колонки scope на `processed_events`, `bot_context_scoped`, таблицы `legacy_*_scope_map`, dry-run/apply. Старые `event_id`/статусы не переписываются. Автоназначение project **запрещено** — только явная карта оператора:
+`003` аддитивна: колонки scope на `processed_events`, `bot_context_scoped`, таблицы `legacy_*_scope_map`, dry-run/apply, частичный unique по `(project_id, bot_id, channel, external_event_id)`. Старые `event_id`/статусы/`correlation_id` не переписываются. После apply защита от повторов срабатывает и для нового составного ключа WF-00 (`telegram|project|bot|42` ≡ legacy `tg_42` с той же подтверждённой областью). Автоназначение project **запрещено** — только явная карта оператора. Конфликты области — через dry-run (`scope_identity_conflicts`); apply отказывается без удаления строк:
 
 ```sql
 SELECT dis_core_legacy_event_scope_dry_run();
--- заполнить legacy_event_scope_map
+-- заполнить legacy_event_scope_map; устранить scope_identity_conflicts
 SELECT dis_core_legacy_event_scope_apply();
 ```
 
