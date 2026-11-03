@@ -11,13 +11,24 @@ import { spawn, spawnSync } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
-const url = process.env.DIS_TEST_DATABASE_URL || '';
+let url = process.env.DIS_TEST_DATABASE_URL || '';
+const database='dis_scoped_'+randomUUID().replaceAll('-','');
 const docker = process.env.DIS_TEST_PSQL_DOCKER || '';
 const hasDb = Boolean(url || docker);
+// Keep every run's fixtures, including deliberate mapping conflicts, isolated.
+// Never clear an existing database to make a re-run green.
+if(hasDb){
+  const r=docker
+    ? spawnSync('docker',['exec',docker,'psql','-U','dis','-d','dis_core_test','-v','ON_ERROR_STOP=1','-c','CREATE DATABASE '+database],{encoding:'utf8'})
+    : spawnSync('psql',[url,'-v','ON_ERROR_STOP=1','-c','CREATE DATABASE '+database],{encoding:'utf8'});
+  if(r.status!==0) throw new Error('isolated test database creation failed: '+r.stderr);
+  if(url){const target=new URL(url);target.pathname='/'+database;url=target.toString();}
+}
+
 
 function psql(sqlText) {
   const r = docker
-    ? spawnSync('docker', ['exec', '-i', docker, 'psql', '-U', 'dis', '-d', 'dis_core_test', '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sqlText], {
+    ? spawnSync('docker', ['exec', '-i', docker, 'psql', '-U', 'dis', '-d', database, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sqlText], {
       encoding: 'utf8',
       maxBuffer: 10 * 1024 * 1024,
     })
@@ -36,7 +47,7 @@ function psqlAsync(sqlText) {
   return new Promise((resolve, reject) => {
     const cmd = docker ? 'docker' : 'psql';
     const args = docker
-      ? ['exec', '-i', docker, 'psql', '-U', 'dis', '-d', 'dis_core_test', '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sqlText]
+      ? ['exec', '-i', docker, 'psql', '-U', 'dis', '-d', database, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sqlText]
       : [url, '-v', 'ON_ERROR_STOP=1', '-t', '-A', '-c', sqlText];
     const child = spawn(cmd, args, { encoding: 'utf8' });
     let stdout = '';
@@ -52,14 +63,14 @@ function psqlAsync(sqlText) {
 }
 
 function applyMigrations() {
-  for (const file of ['001_core.sql', '002_core_processing.sql', '003_scoped_ingress.sql']) {
+  for (const file of ['001_core.sql', '002_core_processing.sql', '003_scoped_ingress.sql', '004_review_fixes.sql']) {
     const hostPath = path.join(root, 'db', file);
     let r;
     if (docker) {
       const dest = `/tmp/${file}`;
       const cp = spawnSync('docker', ['cp', hostPath, `${docker}:${dest}`], { encoding: 'utf8' });
       if (cp.status !== 0) throw new Error(`docker cp ${file}: ${cp.stderr}`);
-      r = spawnSync('docker', ['exec', docker, 'psql', '-U', 'dis', '-d', 'dis_core_test', '-v', 'ON_ERROR_STOP=1', '-f', dest], {
+      r = spawnSync('docker', ['exec', docker, 'psql', '-U', 'dis', '-d', database, '-v', 'ON_ERROR_STOP=1', '-f', dest], {
         encoding: 'utf8',
       });
     } else {

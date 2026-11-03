@@ -48,6 +48,7 @@ db/
   001_core.sql
   002_core_processing.sql
   003_scoped_ingress.sql
+  004_review_fixes.sql
 workflows/WF-00…04
 teststand/docker-compose.yml
 tests/
@@ -62,6 +63,7 @@ docs/
 psql -v ON_ERROR_STOP=1 "$DIS_TEST_DATABASE_URL" -f db/001_core.sql
 psql -v ON_ERROR_STOP=1 "$DIS_TEST_DATABASE_URL" -f db/002_core_processing.sql
 psql -v ON_ERROR_STOP=1 "$DIS_TEST_DATABASE_URL" -f db/003_scoped_ingress.sql
+psql -v ON_ERROR_STOP=1 "$DIS_TEST_DATABASE_URL" -f db/004_review_fixes.sql
 ```
 
 `003` аддитивна: колонки scope на `processed_events`, `bot_context_scoped`, таблицы `legacy_*_scope_map`, dry-run/apply, частичный unique по `(project_id, bot_id, channel, external_event_id)`. Старые `event_id`/статусы/`correlation_id` не переписываются. После apply защита от повторов срабатывает и для нового составного ключа WF-00 (`telegram|project|bot|42` ≡ legacy `tg_42` с той же подтверждённой областью). Автоназначение project **запрещено** — только явная карта оператора. Конфликты области — через dry-run (`scope_identity_conflicts`); apply отказывается без удаления строк:
@@ -110,8 +112,8 @@ node --test tests/sql_scoped.test.mjs
 |---|---|
 | JS workflows | `node --test tests/workflows.test.mjs` |
 | Ingress | `node --test ingress/test/*.test.mjs` |
-| PostgreSQL 001–003 | `tests/sql_scoped.test.mjs` + Docker Postgres |
-| Полный n8n E2E soft-delete | Требует pinned image `2.42.6`; иначе **BLOCKED**; known limitation = **EXPECTED_FAILURE** (см. ниже) |
+| PostgreSQL 001–004 | `tests/sql_scoped.test.mjs` + `tests/migration_upgrade.test.mjs` на изолированной БД |
+| Полный n8n E2E | `python3 tests/run_review_e2e.py`: gateway → импортированные WF → PostgreSQL → HTTP, затем повторный импорт; строгий retention probe отдельно |
 
 ## Конфиденциальность — факт и остаток
 
@@ -130,3 +132,62 @@ Ingress отсекает credentials до n8n и не форвардит secret 
 - `RETURN_REPORT.txt`
 
 Автор: **Степанов Д.А.**
+
+## Исправления независимого ревью — 03.11.2026
+
+Применять `004_review_fixes.sql` после 001–003, включая уже установленную 003 из
+`2c8b750` или `91be882`. Историческая 003 не изменялась. 004 повторно применима,
+добавляет/проверяет уникальность подтверждённого scope и заменяет функции
+резервации/операторского сопоставления. Конфликт подтверждённых строк прерывает
+миграцию атомарно; записи, статусы и correlation_id не удаляются и не сбрасываются.
+Не публиковать новый вход, пока конфликт миграции не разобран оператором.
+
+Внутренний вызов gateway → n8n защищён HMAC-SHA256 с доменным префиксом,
+каноническим JSON и timestamp. Сам `authenticated_source` из тела недостоверен.
+Первый Code-узел `Verify Ingress Proof` выполняется до нормализации и резервации.
+Проверяются все поля контракта; возраст подтверждения — максимум 300 секунд,
+допустимое опережение часов — 30 секунд. Повтор в этом окне идемпотентен;
+поздний повтор внешнего события gateway подписывает заново с тем же event key.
+
+Отдельный случайный `DIS_GATEWAY_HMAC_KEY` (минимум 32 символа) задаётся
+только runtime-окружению gateway и n8n. Это не ключ внешнего API/Telegram.
+Ключ отсутствует в JSON workflow, HTTP input и Git; через заголовки передаётся
+только MAC и время. Для проверенной версии Code-узлам необходимы
+`NODE_FUNCTION_ALLOW_BUILTIN=crypto`, `N8N_BLOCK_ENV_ACCESS_IN_NODE=false`.
+Редактировать workflow/окружение могут только доверенные администраторы;
+доступ редактора n8n не считается границей защиты ключа от такого администратора.
+n8n остаётся доступен только по loopback/частному контуру. Публичный endpoint
+редактора/прямого webhook не открывается.
+
+Числовые ID проверяются через `Number.isSafeInteger` до `String`; числовые
+строки проверяются по формату и signed BIGINT-диапазону. Opaque API IDs остаются
+ограниченными допустимым форматом/длиной. `update_id=0`, отрицательные chat.id
+и большие строковые ID сохраняются. Компоненты fallback `chat:message` проверяются
+отдельно. Некорректные ID дают HTTP 400 до отправки в n8n.
+
+При `context.rejected` WF-04 возвращает только unknown/user_scope_mismatch,
+Safe Response — HTTP 403/rejected без состояния/содержимого чужого контекста.
+Своё событие терминально фиксируется как processed_events.completed: отказ
+доставлен и обработан, бизнес-действие не выполнялось. Его повтор возвращает
+обычный duplicate; чужая блокировка не снимается.
+
+### Проверки и изоляция
+
+```sh
+node --test tests/workflows.test.mjs tests/prepare_import.test.mjs tests/review_regressions.test.mjs ingress/test/*.test.mjs
+# Только отдельный тестовый PostgreSQL:
+DIS_TEST_PSQL_DOCKER=OWNED_TEST_CONTAINER node --test tests/sql_scoped.test.mjs tests/migration_upgrade.test.mjs
+python3 tests/run_review_e2e.py
+```
+
+Последняя команда создаёт собственные Docker network/контейнеры с уникальными
+именами, не использует production credentials и удаляет только созданные ею
+контейнеры/сеть. PostgreSQL наружу не публикуется, n8n — только host loopback.
+Образ n8n закреплён на 2.42.6 с SHA256; CLI-версия проверяется до импорта.
+Недоступность Docker/образа даёт BLOCKED и ненулевой exit, не echo-успех.
+CI действительно выполняет этот runner и сохраняет `.local/review-e2e-results.json`.
+Строгая проверка физических input-записей остаётся отдельной EXPECTED_FAILURE,
+если маркер сохранён; это не полная приёмка конфиденциальности n8n.
+
+Текущие фактические результаты и известные ограничения —
+[HARDENING_REPORT.md](docs/HARDENING_REPORT.md) и `RETURN_REPORT.txt`.

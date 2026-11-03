@@ -13,6 +13,7 @@ const SECRET_B = 'telegram-bot-b-webhook-secret-yy';
 const API_SECRET = 'api-service-hmac-secret-zzzzzz';
 
 function setupConfig(upstreamUrl) {
+  process.env.DIS_GATEWAY_HMAC_KEY='isolated-test-proof-key-not-real-secret';
   process.env.TELEGRAM_BOT_A_WEBHOOK_SECRET = SECRET_A;
   process.env.TELEGRAM_BOT_B_WEBHOOK_SECRET = SECRET_B;
   process.env.API_SERVICE_HMAC_SECRET = API_SECRET;

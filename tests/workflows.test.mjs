@@ -1,3 +1,4 @@
+import {signInternal} from '../ingress/src/internal-proof.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
@@ -14,7 +15,7 @@ const node = (index, name) => workflows[index].nodes.find(n => n.name === name);
 function run(index, name, json, prior = {}) {
   return JSON.parse(JSON.stringify(vm.runInNewContext(
     `(function(){${node(index, name).parameters.jsCode}})()`,
-    { $json: json, $execution: { id: 'test-execution' }, require,
+    { Buffer, $env: {DIS_GATEWAY_HMAC_KEY:'isolated-test-proof-key-not-real-secret'}, $json: json, $execution: { id: 'test-execution' }, require,
       $: name => ({ first: () => ({ json: prior[name] }) }) }, { timeout: 1000 })));
 }
 const allowed = { auth: { allowed: true, registration_required: false },
@@ -38,7 +39,8 @@ function trusted(extra = {}) {
 }
 
 function intake(body, headers = {}) {
-  let value = run(0, 'Normalize Input', { body, headers })[0].json;
+  let value = run(0, 'Verify Ingress Proof', {body, headers:{...headers,...signInternal(body,'isolated-test-proof-key-not-real-secret')}})[0].json;
+  value = run(0, 'Normalize Input', value)[0].json;
   value = run(0, 'Generate IDs', value)[0].json;
   return run(0, 'Sanitize Payload', value)[0].json;
 }

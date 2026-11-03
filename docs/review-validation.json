@@ -1,0 +1,78 @@
+{
+  "verified_at_utc": "2026-11-03T19:04:56.356348+00:00",
+  "baseline": "91be8829dc4d5d22aae39f97d13d0f62573d601a",
+  "javascript": {
+    "status": "PASS",
+    "passed": 29
+  },
+  "postgres": {
+    "status": "PASS",
+    "passed": 12
+  },
+  "baseline_regressions": {
+    "status": "FAIL_EXPECTED_REPRODUCTION",
+    "failed": 3
+  },
+  "upgrade_before_after": [
+    {
+      "baseline": "2c8b750",
+      "before_acquired": true,
+      "after_acquired": false,
+      "after_duplicate": true,
+      "after_correlation": "COR-preserved"
+    },
+    {
+      "baseline": "91be882",
+      "before_acquired": false,
+      "after_acquired": false,
+      "after_duplicate": true,
+      "after_correlation": "COR-preserved"
+    }
+  ],
+  "e2e": {
+    "n8n_version": "2.42.6",
+    "status": "PASS_WITH_EXPECTED_FAILURE",
+    "phases": [
+      {
+        "phase": "first_import",
+        "functional": "PASS",
+        "checks": 7,
+        "retention": {
+          "status": "EXPECTED_FAILURE",
+          "physical_rows": 1
+        }
+      },
+      {
+        "phase": "reimport",
+        "functional": "PASS",
+        "checks": 7,
+        "retention": {
+          "status": "EXPECTED_FAILURE",
+          "physical_rows": 1
+        }
+      }
+    ]
+  },
+  "historical_003_unchanged": true,
+  "source_sha256": {
+    "db/001_core.sql": "d0e5fc64ef316597aba4e2bbd8179e46c464ffeb16c6d377908be93045d10083",
+    "db/002_core_processing.sql": "0e2f841d04d94a74d9d53343af272e83416368010baa7b40262caf68e7ceb2e1",
+    "db/003_scoped_ingress.sql": "bd626d44f9cb599dc2375340577081a8f6aa86a257b8b5755f877c216e72cf29",
+    "db/004_review_fixes.sql": "36ee746d826afc3f457c1569082bd329163f513dad772be9241cc2ad832f0b8b",
+    "workflows/WF-00_SYS_Event_Intake.json": "4950401bdd3c66b469df4eea1c70440db1c21c23325a9b012cf14cc77f162cb8",
+    "workflows/WF-01_SYS_Idempotency.json": "f3f8a31ed56527054274996d4859edd6209fd9b90a34fa33fd6af091b2681212",
+    "workflows/WF-02_SYS_User_Auth.json": "d626336f862a0eb8cc392b8ee566553831854ff8c886d499454ae078d7dfc692",
+    "workflows/WF-03_SYS_Context_Manager.json": "d41687ae8bec2455deeb1aa8378a5aa9ba019cddf3f38368c2cb6924a2c838df",
+    "workflows/WF-04_CORE_Router.json": "da4606c3680a795b55d03003c64f627c6af7c9e3b71d4fe15a5732972f4a6cb2",
+    "ingress/src/auth.mjs": "a91a13f2cf6f21b829a70653c3f2a18769c1f119aff649467088c2510ff83ace",
+    "ingress/src/config.mjs": "a5c97c814c7c6e7e98bf49c7e12c7a252cbbb4041b3f973924114d160fd411e9",
+    "ingress/src/internal-proof.mjs": "b1401546dde0e65d934f328a269e673eaf1c82d6597864547f4f0e5ca2e96c80",
+    "ingress/src/rate-limit.mjs": "74f2cda6bd74cc396592c8769835d57fbbaa60fbd235767215adf44e7a49aa9a",
+    "ingress/src/server.mjs": "29f41cf05d5b6862a5942d3aff5d5fa8f8d30ebe64a1cd9ffac1918ff4cc142e",
+    "ingress/n8n-verify-proof.js": "09f587f8acfc2b94bd968040bfa6613641222bc150690dfd80f3bc58b3bffa5d",
+    "tests/e2e_review.mjs": "81047ca8889a11650f02a63bc6ab924e01c5cede25b22434c53d371c7d7ea85d",
+    "tests/run_review_e2e.py": "257e7fc9a4e3ea3ac7990e4c4039c82950644d741bf9f5acf78277b806d7db5e",
+    "tests/test_e2e.py": "99bc9b32bfcbed57e1def27a0ca5455d8806624d60aeb2893c90aea2b3619db3"
+  },
+  "original_retention_test_unchanged": true
+}

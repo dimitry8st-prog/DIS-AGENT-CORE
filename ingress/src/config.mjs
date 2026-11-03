@@ -40,7 +40,11 @@ export function loadConfig(path = process.env.DIS_INGRESS_CONFIG) {
       may_assert_user_id: source.channel === 'api' ? Boolean(source.may_assert_user_id) : false,
     });
   }
+  const internalKey=requireEnv('DIS_GATEWAY_HMAC_KEY');
+  if(internalKey.length<32) throw new Error('weak internal proof key');
+  if([...sources.values()].some(source=>source.secret===internalKey)) throw new Error('internal key must differ from external credentials');
   return {
+    internal_proof_secret: internalKey,
     bind: raw.bind ?? '127.0.0.1',
     port: Number(raw.port ?? 8080),
     max_body_bytes: Number(raw.max_body_bytes ?? 65536),

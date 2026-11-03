@@ -27,10 +27,12 @@ services:
 
   n8n:
     profiles: ["n8n"]
-    # Historical cloud validation used n8n 2.42.6 (private image).
-    # Override: N8N_IMAGE=your.registry/n8n:2.42.6
-    image: ${N8N_IMAGE:-n8nio/n8n:1.70.1}
+    # Explicitly pinned tested version; no silent 1.x fallback.
+    image: n8nio/n8n:2.42.6@sha256:526daa38b68e923cc00c5280d18b4da5d489f115a73bdbf3b8e452b184197a9a
     environment:
+      DIS_GATEWAY_HMAC_KEY: ${DIS_GATEWAY_HMAC_KEY:?Set a separate internal key of at least 32 characters}
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
       N8N_HOST: 127.0.0.1
       N8N_PORT: 5678
       N8N_LISTEN_ADDRESS: 0.0.0.0

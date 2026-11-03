@@ -4,15 +4,11 @@ import {
   verifyTelegramSecret,
   verifyServiceHmac,
   extractTelegramUserAndDialogue,
+  integerId,
+  contractId,
 } from './auth.mjs';
+import { signInternal } from './internal-proof.mjs';
 import { createRateLimiter } from './rate-limit.mjs';
-
-const SAFE_HEADERS_DROP = new Set([
-  'x-telegram-bot-api-secret-token',
-  'x-dis-signature',
-  'authorization',
-  'cookie',
-]);
 
 function readBody(req, maxBytes) {
   return new Promise((resolve, reject) => {
@@ -55,6 +51,8 @@ function clientKey(req) {
 }
 
 export function createServer(config) {
+  if (typeof config.internal_proof_secret !== 'string' || config.internal_proof_secret.length < 32) throw new Error('missing internal proof key');
+  if([...config.sources.values()].some(source=>source.secret===config.internal_proof_secret)) throw new Error('internal key must differ from external credentials');
   const allow = createRateLimiter(config.rate_limit);
 
   return http.createServer(async (req, res) => {
@@ -96,6 +94,7 @@ export function createServer(config) {
       } catch {
         return json(res, 400, { ok: false, error: 'invalid_json' });
       }
+      if (!body || typeof body !== 'object' || Array.isArray(body)) return json(res,400,{ok:false,error:'invalid_json_object'});
 
       // Client-supplied project/bot/channel must not override trusted source binding.
       if (
@@ -119,23 +118,22 @@ export function createServer(config) {
         payload = {
           text: extracted.text,
           callback_data: extracted.callback_data,
-          update: body,
         };
       } else {
         // Service may assert external user_id only when explicitly allowed for this source.
         if (!source.may_assert_user_id) {
           return json(res, 403, { ok: false, error: 'user_assertion_forbidden' });
         }
-        user_id = body.user_id != null ? String(body.user_id) : null;
+        user_id = body.user_id != null ? integerId(body.user_id) : null;
         dialogue_id =
           body.dialogue_id != null
-            ? String(body.dialogue_id)
+            ? contractId(body.dialogue_id)
             : user_id;
         external_event_id =
           body.external_event_id != null
-            ? String(body.external_event_id)
+            ? contractId(body.external_event_id)
             : body.event_id != null
-              ? String(body.event_id)
+              ? contractId(body.event_id)
               : null;
         payload = body.payload ?? {};
       }
@@ -176,16 +174,12 @@ export function createServer(config) {
           'content-type': 'application/json',
           'x-dis-ingress': '1',
           'x-dis-source-id': source.id,
+          ...signInternal(trusted, config.internal_proof_secret),
         };
-        // Never forward secret headers upstream.
-        for (const [k, v] of Object.entries(req.headers)) {
-          if (SAFE_HEADERS_DROP.has(k.toLowerCase())) continue;
-          if (k.toLowerCase().startsWith('x-telegram') || k.toLowerCase().startsWith('x-dis-signature')) {
-            continue;
-          }
-        }
+        // Outbound headers are an explicit allowlist; client headers never pass through.
         const upstreamRes = await fetch(config.n8n_upstream_url, {
           method: 'POST',
+          redirect: 'error',
           headers: upstreamHeaders,
           body: JSON.stringify(trusted),
           signal: controller.signal,
@@ -205,6 +199,7 @@ export function createServer(config) {
         clearTimeout(timer);
       }
     } catch (err) {
+      if (err?.code === 400) return json(res, 400, { ok: false, error: 'invalid_id' });
       if (err?.code === 413) return json(res, 413, { ok: false, error: 'payload_too_large' });
       // Never leak internals or secrets.
       return json(res, 500, { ok: false, error: 'internal_error' });

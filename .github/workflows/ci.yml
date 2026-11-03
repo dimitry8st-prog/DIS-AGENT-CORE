@@ -4,16 +4,21 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
 jobs:
   javascript:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
       - name: Workflow + prepare-import unit tests
-        run: node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
+        run: node --test tests/workflows.test.mjs tests/prepare_import.test.mjs tests/review_regressions.test.mjs
       - name: Ingress unit tests
         working-directory: ingress
         run: node --test test/*.test.mjs
@@ -36,6 +41,8 @@ jobs:
           --health-retries 20
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
@@ -44,17 +51,21 @@ jobs:
       - name: Scoped SQL integration
         env:
           DIS_TEST_DATABASE_URL: postgres://dis:dis_test_only_not_prod@127.0.0.1:5432/dis_core_test
-        run: node --test tests/sql_scoped.test.mjs
+        run: node --test tests/sql_scoped.test.mjs tests/migration_upgrade.test.mjs
 
-  # Full n8n E2E (import + soft-delete probe) needs the private 2.42.6 image
-  # and must NOT run tests/run_cloud.py on shared infrastructure.
   e2e-n8n:
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-      - name: Document E2E gate
-        run: |
-          echo "E2E_N8N status=BLOCKED_without_pinned_private_image"
-          echo "Use local: docker compose -f teststand/docker-compose.yml --profile n8n up -d"
-          echo "Do NOT run tests/run_cloud.py here (stops Postgres / fault injection)."
-          echo "Preserved expected failure: n8n soft-delete retention (docs/CORE_WORKFLOWS_REPORT.md)."
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Actual isolated gateway to n8n 2.42.6 to PostgreSQL, including reimport
+        run: python3 tests/run_review_e2e.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: n8n-review-results
+          path: .local/review-e2e-results.json
+          include-hidden-files: true

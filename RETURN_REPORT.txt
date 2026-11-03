@@ -1,75 +1,23 @@
-RETURN_REPORT — DIS-AGENT-CORE hardening/scoped-ingress
-Report date: 2026-11-03
-
-BASE_SHA (main): 95b823dc69b93ae12ab8c22c0d0abd65d87b71a0
-DOCS_PILOT: fb2cfbff979911c50549fb793b1aab8710473eb4 (docs/antigravity-codex-pilot)
-BRANCH: hardening/scoped-ingress
-REVIEWED_SHA (Request changes): 2c8b75036b93726516713e2cae2c8d0642a50ae0
-PRIOR_TIP: 2c8b75036b93726516713e2cae2c8d0642a50ae0
-FINAL_SHA: 9c424cd657b4a3186a59f1c48451b2b5557c68fd
-FIX_STAGE: defect-1 legacy/composite idempotency after scope apply
-
+DIS-AGENT-CORE — review fixes, 2026-11-03
 PR: https://github.com/dimitry8st-prog/DIS-AGENT-CORE/pull/1
+Branch: hardening/scoped-ingress
+Baseline: 91be8829dc4d5d22aae39f97d13d0f62573d601a
+Final SHA: resolve with git rev-parse HEAD; exact commit provided in final handoff.
 
-DEFECT 1 (independent review):
-  Problem: dis_core_legacy_event_scope_apply() fills scope but keeps old event_id
-  (e.g. tg_42). WF-00 builds telegram|project|bot|42. dis_core_reserve() only
-  conflicted on event_id PK → second reservation of the same logical event.
-  Fix:
-    - partial UNIQUE uq_processed_events_scope_identity on confirmed scope
-      (created only when preflight finds no duplicate groups)
-    - dis_core_reserve: advisory_xact_lock on scope + lookup by
-      (project_id,bot_id,channel,external_event_id) before insert; handle
-      unique_violation; return existing correlation_id + existing_event_id
-    - dry-run reports scope_identity_conflicts; apply refuses without deletes
-    - old event_id / status / correlation_id preserved; no auto-assign
+Changes:
+- Stop rejected context in router/Safe Response; HTTP403, own event terminal, foreign lock preserved.
+- HMAC-authenticate complete gateway contract in first n8n node before reservation; runtime-only separate key.
+- Reject unsafe/fractional/malformed IDs before String at Telegram/API gateway and WF-00.
+- Add 004 migration, preserving historical 003; test both upgrade variants and fresh DB without deleting data.
+- Replace CI echo with true isolated n8n2.42.6 E2E including reimport and strict retention probe.
 
-CHANGED / ADDED (this stage):
-  db/003_scoped_ingress.sql
-  tests/sql_scoped.test.mjs
-  docs/HARDENING_REPORT.md
-  README.md
-  RETURN_REPORT.txt
-
-BEFORE (reviewed tip, clean schema then failing assertions):
-  legacy apply + composite reserve → idempotency.acquired === true (BUG)
-  concurrent distinct event_id same scope → 2 acquired (BUG)
-  dry-run.scope_identity_conflicts → missing (BUG)
-
-AFTER (same tests):
-  composite after legacy → duplicate=true, correlation_id preserved, existing_event_id=legacy
-  concurrent same scope → exactly 1 acquired
-  dry-run conflicts → apply refused_due_to_conflicts, rows retained
-
-COMMANDS (2026-11-03):
-  node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
-  node --test ingress/test/auth.test.mjs ingress/test/server.test.mjs
-  set DIS_TEST_PSQL_DOCKER=teststand-postgres-1
-  node --test tests/sql_scoped.test.mjs
-
-RESULTS:
-  workflows + prepare-import .... PASS (13)
-  ingress tests ................. PASS (11)
-  sql_scoped.test.mjs ........... PASS (8)
-  JS total ...................... PASS (24)
-  migration 003 re-apply ........ PASS
-
-LIMITATIONS:
-  - telegram_id lookup ≠ end-user authentication
-  - service/webhook auth ≠ end-user authentication
-  - n8n soft-delete residual storage open
-  - payments/orders/LLM/registration not implemented
-  - existing duplicate scope groups block unique index until operator resolves via dry-run
-  - stage is not production-ready
-
-OPERATOR VERIFY:
-  git checkout hardening/scoped-ingress
-  node --test tests/workflows.test.mjs tests/prepare_import.test.mjs
-  cd ingress && node --test test/*.test.mjs
-  docker compose -f teststand/docker-compose.yml up -d postgres
-  set DIS_TEST_PSQL_DOCKER=teststand-postgres-1
-  node --test tests/sql_scoped.test.mjs
-
-NEXT STEP:
-  Commit + push when requested; continue remaining review defects if any;
-  private n8n 2.42.6 behind ingress; operator legacy scope maps; no auto-retry.
+Results and source hashes: docs/review-validation.json
+Detailed commands, reproduction and limits: docs/HARDENING_REPORT.md
+Original baseline suites: PASS24. Baseline new regressions: FAIL3 (expected reproductions).
+Final JS/ingress/import/regression: PASS29. PostgreSQL/upgrade: PASS12.
+Actual n8n2.42.6 E2E: PASS7 first import + PASS7 reimport.
+Retention: EXPECTED_FAILURE1 + EXPECTED_FAILURE1 (one physical row per probe).
+Functional E2E blockers: none in this environment. Confidentiality limitation remains open.
+Never conflate this with all-tests-passed.
+No merge, deploy, mass unlock, production secret access or old-event replay performed.
+Independent acceptance is reserved for the reviewer.

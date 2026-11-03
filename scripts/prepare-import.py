@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Remap portable workflow/credential IDs into copies, without changing sources.
 
-Trusted contract (post-hardening): WF-00 rejects payloads without
-ingress.authenticated_source and server-bound project_id/bot_id/channel.
+Trusted contract (post-hardening): WF-00 verifies internal HMAC before normalization/reservation.
+The JSON authenticated_source flag alone is never trusted.
 The n8n webhook must stay loopback/private; public entry is the ingress service.
 """
 import argparse
@@ -47,6 +47,7 @@ def prepare(source, output, mapping):
         )
 
     contract = {
+        'internal_proof': {'algorithm':'HMAC-SHA256', 'key_runtime_env':'DIS_GATEWAY_HMAC_KEY', 'max_age_seconds':300, 'headers':['x-dis-proof-time','x-dis-proof']},
         'ingress_required': True,
         'webhook_exposure': exposure,
         'required_fields': [
