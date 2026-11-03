@@ -1,0 +1,23 @@
+DIS-AGENT-CORE — review fixes, 2026-11-03
+PR: https://github.com/dimitry8st-prog/DIS-AGENT-CORE/pull/1
+Branch: hardening/scoped-ingress
+Baseline: 91be8829dc4d5d22aae39f97d13d0f62573d601a
+Final SHA: resolve with git rev-parse HEAD; exact commit provided in final handoff.
+
+Changes:
+- Stop rejected context in router/Safe Response; HTTP403, own event terminal, foreign lock preserved.
+- HMAC-authenticate complete gateway contract in first n8n node before reservation; runtime-only separate key.
+- Reject unsafe/fractional/malformed IDs before String at Telegram/API gateway and WF-00.
+- Add 004 migration, preserving historical 003; test both upgrade variants and fresh DB without deleting data.
+- Replace CI echo with true isolated n8n2.42.6 E2E including reimport and strict retention probe.
+
+Results and source hashes: docs/review-validation.json
+Detailed commands, reproduction and limits: docs/HARDENING_REPORT.md
+Original baseline suites: PASS24. Baseline new regressions: FAIL3 (expected reproductions).
+Final JS/ingress/import/regression: PASS29. PostgreSQL/upgrade: PASS12.
+Actual n8n2.42.6 E2E: PASS7 first import + PASS7 reimport.
+Retention: EXPECTED_FAILURE1 + EXPECTED_FAILURE1 (one physical row per probe).
+Functional E2E blockers: none in this environment. Confidentiality limitation remains open.
+Never conflate this with all-tests-passed.
+No merge, deploy, mass unlock, production secret access or old-event replay performed.
+Independent acceptance is reserved for the reviewer.

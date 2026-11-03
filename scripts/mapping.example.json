@@ -1,0 +1,17 @@
+{
+  "workflow_ids": {
+    "disCoreWF00": "ACTUAL_WF00_ID",
+    "disCoreWF01": "ACTUAL_WF01_ID",
+    "disCoreWF02": "ACTUAL_WF02_ID",
+    "disCoreWF03": "ACTUAL_WF03_ID",
+    "disCoreWF04": "ACTUAL_WF04_ID"
+  },
+  "postgres_credential": {
+    "id": "YOUR_TEST_CREDENTIAL_ID",
+    "name": "Your test PostgreSQL"
+  },
+  "webhook_path": "dis-agent-core",
+  "webhook_exposure": "loopback_only",
+  "ingress_required": true,
+  "notes": "Public clients must hit ingress, not this webhook path. WF-00 expects ingress.authenticated_source + project_id/bot_id/channel/external_event_id/dialogue_id."
+}

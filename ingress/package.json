@@ -1,0 +1,14 @@
+{
+  "name": "dis-agent-core-ingress",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Trusted ingress gateway in front of n8n WF-00. Not a public end-user auth system.",
+  "engines": {
+    "node": ">=24"
+  },
+  "scripts": {
+    "start": "node src/server.mjs",
+    "test": "node --test test/*.test.mjs"
+  }
+}

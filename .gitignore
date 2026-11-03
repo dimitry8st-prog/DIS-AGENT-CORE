@@ -2,3 +2,7 @@ __pycache__/
 *.pyc
 .local/
 test-results/
+ingress/config/sources.json
+.env
+.env.*
+!.env.example

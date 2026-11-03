@@ -1,0 +1,71 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  javascript:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Workflow + prepare-import unit tests
+        run: node --test tests/workflows.test.mjs tests/prepare_import.test.mjs tests/review_regressions.test.mjs
+      - name: Ingress unit tests
+        working-directory: ingress
+        run: node --test test/*.test.mjs
+
+  postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: dis_core_test
+          POSTGRES_USER: dis
+          POSTGRES_PASSWORD: dis_test_only_not_prod
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U dis -d dis_core_test"
+          --health-interval 3s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Install psql client
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+      - name: Scoped SQL integration
+        env:
+          DIS_TEST_DATABASE_URL: postgres://dis:dis_test_only_not_prod@127.0.0.1:5432/dis_core_test
+        run: node --test tests/sql_scoped.test.mjs tests/migration_upgrade.test.mjs
+
+  e2e-n8n:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Actual isolated gateway to n8n 2.42.6 to PostgreSQL, including reimport
+        run: python3 tests/run_review_e2e.py
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: n8n-review-results
+          path: .local/review-e2e-results.json
+          include-hidden-files: true

@@ -1,0 +1,40 @@
+{
+  "bind": "127.0.0.1",
+  "port": 8080,
+  "max_body_bytes": 65536,
+  "upstream_timeout_ms": 15000,
+  "rate_limit": {
+    "window_ms": 60000,
+    "max": 120
+  },
+  "n8n_upstream_url": "http://127.0.0.1:5678/webhook/dis-agent-core",
+  "require_configured_sources": true,
+  "sources": [
+    {
+      "id": "telegram-demo-a",
+      "channel": "telegram",
+      "project_id": "proj_demo",
+      "bot_id": "bot_a",
+      "path": "/ingress/telegram/bot_a",
+      "secret_env": "TELEGRAM_BOT_A_WEBHOOK_SECRET"
+    },
+    {
+      "id": "telegram-demo-b",
+      "channel": "telegram",
+      "project_id": "proj_demo",
+      "bot_id": "bot_b",
+      "path": "/ingress/telegram/bot_b",
+      "secret_env": "TELEGRAM_BOT_B_WEBHOOK_SECRET"
+    },
+    {
+      "id": "api-demo",
+      "channel": "api",
+      "project_id": "proj_demo",
+      "bot_id": "api_main",
+      "path": "/ingress/api/service",
+      "auth": "hmac-sha256",
+      "secret_env": "API_SERVICE_HMAC_SECRET",
+      "may_assert_user_id": true
+    }
+  ]
+}

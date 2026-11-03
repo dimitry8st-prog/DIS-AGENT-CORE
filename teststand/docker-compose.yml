@@ -1,0 +1,49 @@
+# Isolated local stand. Pinned PostgreSQL. Optional n8n profile.
+# NOT production. Does not stop host Postgres or inject faults into shared DBs.
+#
+# Postgres only (SQL + ingress unit tests):
+#   docker compose -f teststand/docker-compose.yml up -d postgres
+#   set DIS_TEST_DATABASE_URL=postgres://dis:dis_test_only_not_prod@127.0.0.1:55432/dis_core_test
+#
+# Optional n8n (private loopback only):
+#   docker compose -f teststand/docker-compose.yml --profile n8n up -d
+#
+# Tear down:
+#   docker compose -f teststand/docker-compose.yml --profile n8n down
+services:
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_DB: dis_core_test
+      POSTGRES_USER: dis
+      POSTGRES_PASSWORD: dis_test_only_not_prod
+    ports:
+      - "127.0.0.1:55432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U dis -d dis_core_test"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+
+  n8n:
+    profiles: ["n8n"]
+    # Explicitly pinned tested version; no silent 1.x fallback.
+    image: n8nio/n8n:2.42.6@sha256:526daa38b68e923cc00c5280d18b4da5d489f115a73bdbf3b8e452b184197a9a
+    environment:
+      DIS_GATEWAY_HMAC_KEY: ${DIS_GATEWAY_HMAC_KEY:?Set a separate internal key of at least 32 characters}
+      NODE_FUNCTION_ALLOW_BUILTIN: crypto
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_HOST: 127.0.0.1
+      N8N_PORT: 5678
+      N8N_LISTEN_ADDRESS: 0.0.0.0
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://127.0.0.1:5678/
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      DB_TYPE: sqlite
+      DB_SQLITE_DATABASE: /home/node/.n8n/database.sqlite
+    ports:
+      - "127.0.0.1:5678:5678"
+    depends_on:
+      postgres:
+        condition: service_healthy
