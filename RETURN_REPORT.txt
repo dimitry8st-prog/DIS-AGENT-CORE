@@ -6,6 +6,7 @@ DOCS_PILOT: fb2cfbff979911c50549fb793b1aab8710473eb4 (docs/antigravity-codex-pil
 BRANCH: hardening/scoped-ingress
 REVIEWED_SHA (Request changes): 2c8b75036b93726516713e2cae2c8d0642a50ae0
 PRIOR_TIP: 2c8b75036b93726516713e2cae2c8d0642a50ae0
+FINAL_SHA: 9c424cd657b4a3186a59f1c48451b2b5557c68fd
 FIX_STAGE: defect-1 legacy/composite idempotency after scope apply
 
 PR: https://github.com/dimitry8st-prog/DIS-AGENT-CORE/pull/1
